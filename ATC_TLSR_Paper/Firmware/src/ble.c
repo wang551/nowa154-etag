@@ -59,6 +59,10 @@ _attribute_ram_code_ void ble_disconnect_callback(uint8_t e, uint8_t *p, int n)
 {
 	ble_connected = 0;
 	ota_started = 0;
+	// The SDK stops advertising while connected and never restarts it on terminate.
+	// Upstream never wired app_switch_to_indirect_adv to this event, so one
+	// disconnect made the tag disappear from every scan until a battery pull.
+	app_switch_to_indirect_adv(e, p, n);
 	printf("BLE disconnected\r\n");
 }
 

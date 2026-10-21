@@ -1,0 +1,13 @@
+# 文本文件统一 LF 入库，保证跨平台 diff 干净
+# （git 只在入库时规范化，不会改动本地已有文件的内容）
+*.c    text
+*.h    text
+*.inl  text
+*.md   text
+*.txt  text
+*.py   text
+*.html text
+*.json text
+*.sh   text eol=lf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf

@@ -24,16 +24,16 @@ uint8_t lut_bw_213_23_part[] =
     };
 
 
-_attribute_ram_code_ uint8_t EPD_BW_213_read_temp(void)
+_attribute_ram_code_ int8_t EPD_BW_213_read_temp(void)
 {
-    uint8_t epd_temperature = 0 ;
+    int8_t epd_temperature = 0 ;
     EPD_WriteCmd(0x04);
 
     // check BUSY pin
     EPD_CheckStatus(100);
 
     EPD_WriteCmd(0x40);
-    epd_temperature = EPD_SPI_read();
+    epd_temperature = (int8_t)EPD_SPI_read();
     EPD_SPI_read();
 
     // power off
@@ -46,9 +46,9 @@ _attribute_ram_code_ uint8_t EPD_BW_213_read_temp(void)
     return epd_temperature;
 }
 
-_attribute_ram_code_ uint8_t EPD_BW_213_Display(unsigned char *image, int size, uint8_t full_or_partial)
+_attribute_ram_code_ int8_t EPD_BW_213_Display(unsigned char *image, int size, uint8_t full_or_partial)
 {
-    uint8_t epd_temperature = 0 ;
+    int8_t epd_temperature = 0 ;
     
     // Booster soft start
     EPD_WriteCmd(0x06);
@@ -62,7 +62,7 @@ _attribute_ram_code_ uint8_t EPD_BW_213_Display(unsigned char *image, int size, 
     EPD_CheckStatus(100);
 
     EPD_WriteCmd(0x40);
-    epd_temperature = EPD_SPI_read();
+    epd_temperature = (int8_t)EPD_SPI_read();
     EPD_SPI_read();
 
     // panel setting

@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nowa-154R-N 传图工具（152×152）</title>
+<style>
+  :root {
+    --ink:#1c1e21; --muted:#6a6d72; --faint:#8a8d92;
+    --accent:#0366d6; --accent-dark:#0255b0;
+    --card:#fff; --line:#dedcd6;
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; }
+  body { font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+         background:#e9e9e6; color:var(--ink); padding:20px 16px 36px; line-height:1.55; }
+  .wrap { max-width:1120px; margin:0 auto; }
+
+  header { margin:0 0 18px; padding-bottom:12px; border-bottom:1px solid #d6d4ce; }
+  h1 { font-size:20px; margin:0 0 4px; letter-spacing:.3px; }
+  .sub { color:var(--muted); font-size:13px; margin:0; max-width:920px; }
+
+  .layout { display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start; }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:12px;
+           padding:16px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+
+  /* ---- 预览区 ---- */
+  .preview-wrap { flex:0 1 auto; max-width:516px; text-align:center; }
+  .bezel { display:inline-block; padding:14px; background:#c9cbc7; border-radius:10px;
+           box-shadow:inset 0 0 0 2px #9a9c98, 0 3px 8px rgba(0,0,0,.18); }
+  canvas#preview { display:block; width:min(456px, calc(100vw - 96px)); aspect-ratio:1/1;
+                   height:auto; image-rendering:pixelated; background:#fff;
+                   border-radius:2px; cursor:copy; }
+  .preview-label { margin:10px 0 0; font-size:12.5px; color:var(--muted); }
+  .preview-hint { margin:2px 0 0; font-size:12px; color:var(--faint); }
+
+  /* ---- 控制区 ---- */
+  .controls { flex:1 1 420px; min-width:360px; max-width:600px; }
+  .group { padding-bottom:14px; margin-bottom:14px; border-bottom:1px dashed var(--line); }
+  .group:last-child { border-bottom:none; margin-bottom:0; padding-bottom:0; }
+  .group h3 { display:flex; align-items:center; gap:8px; font-size:13.5px; margin:0 0 12px;
+              color:var(--ink); font-weight:600; }
+  .step { display:inline-flex; align-items:center; justify-content:center;
+          width:19px; height:19px; border-radius:50%; background:var(--accent); color:#fff;
+          font-size:11.5px; font-weight:700; flex:none; }
+
+  .row { display:grid; grid-template-columns:78px 1fr; gap:6px 10px; align-items:center; margin:0 0 10px; }
+  .row:last-of-type { margin-bottom:0; }
+  .row > label { font-size:13px; color:var(--muted); text-align:right; }
+  .ctrl { display:flex; align-items:center; flex-wrap:wrap; gap:6px 10px; font-size:13px; min-width:0; }
+
+  label.radio { font-size:13px; margin:0; }
+  input[type=radio], input[type=range] { accent-color:var(--accent); }
+  input[type=range] { flex:0 1 180px; }
+  input[type=number] { width:74px; padding:4px 6px; border:1px solid #c5c3bd; border-radius:6px;
+                       font-size:13px; }
+  select { padding:4px 6px; border:1px solid #c5c3bd; border-radius:6px; font-size:13px;
+           background:#fff; max-width:100%; }
+  #thresholdVal { display:inline-block; width:30px; font-variant-numeric:tabular-nums; }
+
+  .btn-row { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 10px; }
+  .btn-row:last-child { margin-bottom:0; }
+  button { font-size:13px; padding:7px 14px; border:1px solid #c5c3bd; border-radius:6px;
+           background:#fafaf9; cursor:pointer; }
+  button:hover:not(:disabled) { background:#eeece8; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.primary:hover:not(:disabled) { background:var(--accent-dark); }
+
+  .status { display:flex; align-items:center; margin:0 0 10px; font-size:13px; }
+  .status-dot { display:inline-block; width:10px; height:10px; border-radius:50%; background:#bbb;
+                margin-right:6px; flex:none; }
+  .status-dot.on { background:#22c55e; }
+
+  .progress-wrap { background:#eceae6; border-radius:5px; height:10px; overflow:hidden; margin:4px 0 10px; }
+  #progressBar { height:100%; width:0%; background:var(--accent); transition:width .15s; }
+  #log { height:140px; overflow-y:auto; background:#111; color:#9fe29f;
+         font:12px/1.55 Consolas,monospace; border-radius:8px; padding:8px 10px; white-space:pre-wrap; }
+
+  .note { font-size:12px; color:var(--faint); margin:10px 0 0; }
+  .warn { color:#b45309; }
+  code { background:#f0efeb; border:1px solid #e2e0da; padding:0 4px; border-radius:3px;
+         font-size:11.5px; font-family:Consolas,monospace; }
+
+  details.tech { margin-top:10px; border-left:3px solid var(--line); padding:2px 0 2px 10px; }
+  details.tech summary { cursor:pointer; font-size:12px; color:var(--muted); user-select:none; }
+  details.tech summary:hover { color:var(--accent); }
+  details.tech[open] summary { margin-bottom:4px; }
+  details.tech .note { margin-top:4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Nowa-154R-N 电子价签 · BLE 传图工具</h1>
+  <p class="sub">汉朔 152×152 墨水屏 @ ATC 固件（红通道版）。三色屏：图像中的<b>红色</b>像素走红色通道显示，其余颜色照旧黑白抖动（需配套支持 <code>0x06</code> 命令的固件）。</p>
+</header>
+
+<div class="layout">
+  <div class="panel preview-wrap">
+    <div class="bezel" id="dropZone">
+      <canvas id="preview" width="152" height="152"></canvas>
+    </div>
+    <p class="preview-label">预览 152×152 · 黑/白/红三色 · 像素级所见即所得</p>
+    <p class="preview-hint">支持拖拽 / 粘贴图片到本页</p>
+    <p class="note">真机方向校准：发<b>测试图案</b>后，左上角实心三角应出现在实物左上角。若方向不对，用「处理」区的变换按钮纠正（无需重刷固件）。</p>
+  </div>
+
+  <div class="panel controls">
+    <div class="group">
+      <h3><span class="step">1</span>图片来源</h3>
+      <div class="btn-row">
+        <button id="btnFile" class="primary">选择图片…</button>
+        <button id="btnTest">生成测试图案</button>
+      </div>
+      <input type="file" id="fileInput" accept="image/*" hidden>
+    </div>
+
+    <div class="group">
+      <h3><span class="step">2</span>处理</h3>
+      <div class="row">
+        <label>缩放</label>
+        <div class="ctrl">
+          <label class="radio"><input type="radio" name="fit" value="cover" checked>填充裁切</label>
+          <label class="radio"><input type="radio" name="fit" value="contain">完整显示</label>
+        </div>
+      </div>
+      <div class="row">
+        <label>二值化</label>
+        <div class="ctrl">
+          <select id="ditherMode">
+            <option value="fs" selected>Floyd–Steinberg 抖动</option>
+            <option value="bayer">Bayer 4×4 抖动</option>
+            <option value="threshold">固定阈值</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <label>阈值</label>
+        <div class="ctrl">
+          <input type="range" id="threshold" min="32" max="224" value="128">
+          <span id="thresholdVal">128</span>
+        </div>
+      </div>
+      <div class="row">
+        <label>变换</label>
+        <div class="ctrl">
+          <button id="btnRot">↻ 旋转90°</button>
+          <button id="btnFlipH">⇋ 水平翻转</button>
+          <button id="btnFlipV">⇵ 垂直翻转</button>
+          <button id="btnInv">◐ 反相</button>
+        </div>
+      </div>
+      <p class="note">红色判定：色相近纯红（±25°）且饱和度≥45%、亮度足够。调整缩放/二值化/阈值会重新处理原图（变换不重置）。</p>
+    </div>
+
+    <div class="group">
+      <h3><span class="step">3</span>蓝牙发送</h3>
+      <p class="status"><span class="status-dot" id="dot"></span><span id="bleStatus">未连接</span></p>
+      <div class="btn-row">
+        <button id="btnConnect" class="primary">连接设备</button>
+        <button id="btnReconn" disabled>重连</button>
+        <button id="btnSend" disabled>发送到屏幕</button>
+        <button id="btnClock" disabled>恢复时钟</button>
+        <button id="btnDisc" disabled>断开</button>
+      </div>
+      <div class="progress-wrap"><div id="progressBar"></div></div>
+      <div id="log"></div>
+      <p class="note"><span class="warn">旧固件（无 0x06 命令）仍可收图：红数据被忽略，红像素按白显示。</span></p>
+      <details class="tech">
+        <summary>发送协议细节</summary>
+        <p class="note">需 Chrome / Edge。发送序列：<code>05 01</code>锁定 → <code>00 FF</code>清双平面 → <code>02 00 00</code> →
+          13×<code>03</code>（黑白 3040B）→ <code>06 01</code>切红平面 → 13×<code>03</code>（红 3040B，无红像素时跳过）→ <code>01</code> 全刷。</p>
+      </details>
+    </div>
+
+    <div class="group">
+      <h3><span class="step">4</span>时间同步</h3>
+      <div class="row">
+        <label>时区</label>
+        <div class="ctrl"><b id="tzInfo">--:--</b>（浏览器自动）</div>
+      </div>
+      <div class="row">
+        <label>偏移</label>
+        <div class="ctrl">
+          <input type="number" id="timeOffset" value="0" step="1" min="-720" max="720"> 分钟
+          <span class="note" style="margin:0;">（可负，用于微调走时）</span>
+        </div>
+      </div>
+      <div class="row">
+        <label>设备将显示</label>
+        <div class="ctrl"><b id="deviceTime">--:--:--</b><span id="offsetDetail" class="note" style="margin:0;"></span></div>
+      </div>
+      <div class="btn-row" style="margin-top:10px;">
+        <button id="btnTimeSync" class="primary" disabled>同步时间到设备</button>
+      </div>
+      <details class="tech">
+        <summary>时间同步说明</summary>
+        <p class="note">经 RxTx 通道发 <code>DD</code> + 4 字节大端 unix 秒（固件内置命令，无需重刷）。
+          表盘按发送值直接取模显示，故已叠加时区。设备时间重启归零、走时每天约慢 27 秒，可定期重同步或用正偏移预补偿。
+          同步后表盘通常立即重画（最迟约 1 分钟）；图片锁定中需先「恢复时钟」才会显示表盘。</p>
+      </details>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+'use strict';
+const W = 152, H = 152;
+const SRC_OFFSET = 8;                 // BWR_154_SRC_OFFSET（玻璃源极偏移，固件定版 δ=8）
+const COL_BYTES = 20;                 // (152+8+7)/8，控制器 RAM 每列字节数
+const BUF_SIZE = W * COL_BYTES;       // 3040
+const EPD_SERVICE = '13187b10-eba9-a3ba-044e-83d3217d9a38'; // 注意第四段是 9a38
+const EPD_CHAR    = '4b646063-6264-f3a7-8941-e65356ea82fe';
+const RXTX_SERVICE = 0x1f10;          // RxTx 通道（固件 cmd_parser：0xDD = 设时间）
+const RXTX_CHAR    = 0x1f1f;
+const CHUNK = 240;                    // 每包图像数据字节（+1 命令字节 = 241 ≤ MTU 247）
+
+// ---- 状态 ----
+let srcImage = null;                  // ImageBitmap（测试图案时为 null）
+let bmp = null;                       // Uint8Array(W*H)，1=黑 0=白（玻璃坐标，x 左→右 / y 上→下）
+let redBmp = null;                    // Uint8Array(W*H)，1=红（与 bmp 同步变换；反相不动红色）
+let device = null, charEPD = null, charRxTx = null, server = null;
+let sending = false;
+let timeSyncing = false;
+let connecting = false; // true 时 onDisconnect 不做重置（重试循环里是主动断开）
+
+// ---- 红色判定（三色屏：红像素走红平面，黑白平面该处留白）----
+const RED_SAT_MIN = 0.45;   // 饱和度下限 (max-min)/max
+const RED_VAL_MIN = 60;     // 红通道亮度下限
+const RED_HUE_SPAN = 25;    // 色相偏离纯红容限（±°；R 为最大通道时色相 ∈ ±60°）
+function isRedPixel(r, g, b) {
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  if (r < RED_VAL_MIN || r < max || max === min) return false; // 红须占主导且够亮
+  if ((max - min) / max < RED_SAT_MIN) return false;           // 饱和度不足
+  const hue = 60 * (g - b) / (max - min);
+  return Math.abs(hue) <= RED_HUE_SPAN;
+}
+
+const $ = id => document.getElementById(id);
+const logBox = $('log');
+function log(msg) {
+  const t = new Date().toTimeString().slice(0, 8);
+  logBox.textContent += `[${t}] ${msg}\n`;
+  logBox.scrollTop = logBox.scrollHeight;
+}
+function setProgress(p) { $('progressBar').style.width = (p * 100).toFixed(1) + '%'; }
+
+// ---- 打包：与固件 FixBuffer 路径逐位一致（真机 2026-10-21 定版：字节内 MSB-first）----
+// OBD 虚拟缓冲是 LSB-first，FixBuffer 的 ucMirror 位反转后玻璃映射为 MSB-first
+// 黑色玻璃像素 (x,y) → buf[(151-x)*20 + ((y+8)>>3)] 清位 (0x80 >> ((y+8)&7))；初始全 0xFF（白）
+function packBuffer(bmp) {
+  const buf = new Uint8Array(BUF_SIZE).fill(0xFF);
+  for (let y = 0; y < H; y++) {
+    const t = y + SRC_OFFSET, byteIdx = t >> 3, bit = 0x80 >> (t & 7);
+    const row = y * W;
+    for (let x = 0; x < W; x++) {
+      if (bmp[row + x]) buf[(W - 1 - x) * COL_BYTES + byteIdx] &= ~bit;
+    }
+  }
+  return buf;
+}
+
+// 红平面打包：同一玻璃映射，初始 0x00（无红），红像素置位（0x26 RAM 中 1=红）
+function packRedBuffer(rb) {
+  const buf = new Uint8Array(BUF_SIZE);
+  for (let y = 0; y < H; y++) {
+    const t = y + SRC_OFFSET, byteIdx = t >> 3, bit = 0x80 >> (t & 7);
+    const row = y * W;
+    for (let x = 0; x < W; x++) {
+      if (rb[row + x]) buf[(W - 1 - x) * COL_BYTES + byteIdx] |= bit;
+    }
+  }
+  return buf;
+}
+
+// ---- 图像处理 ----
+const BAYER = [0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5];
+
+function renderPipeline() {
+  if (!srcImage) return;
+  const off = document.createElement('canvas');
+  off.width = W; off.height = H;
+  const ctx = off.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+  const fit = document.querySelector('input[name=fit]:checked').value;
+  const iw = srcImage.width, ih = srcImage.height;
+  const s = fit === 'cover' ? Math.max(W / iw, H / ih) : Math.min(W / iw, H / ih);
+  const dw = iw * s, dh = ih * s;
+  ctx.drawImage(srcImage, (W - dw) / 2, (H - dh) / 2, dw, dh);
+  const gray = new Float32Array(W * H);
+  const red = new Uint8Array(W * H);
+  const d = ctx.getImageData(0, 0, W, H).data;
+  let redCount = 0;
+  for (let i = 0; i < W * H; i++) {
+    const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
+    gray[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+    if (isRedPixel(r, g, b)) { red[i] = 1; redCount++; gray[i] = 255; } // 红像素不参与黑白抖动
+  }
+
+  const mode = $('ditherMode').value, thr = +$('threshold').value;
+  const out = new Uint8Array(W * H);
+  if (mode === 'fs') {
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x, old = gray[i];
+        const nv = old < 128 ? 0 : 255;
+        out[i] = old < 128 ? 1 : 0;
+        const e = old - nv;
+        if (x + 1 < W) gray[i + 1] += e * 7 / 16;
+        if (y + 1 < H) {
+          if (x > 0) gray[i + W - 1] += e * 3 / 16;
+          gray[i + W] += e * 5 / 16;
+          if (x + 1 < W) gray[i + W + 1] += e * 1 / 16;
+        }
+      }
+    }
+  } else if (mode === 'bayer') {
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        const m = BAYER[(y & 3) * 4 + (x & 3)];
+        out[y * W + x] = gray[y * W + x] < (m + 0.5) * 16 ? 1 : 0;
+      }
+  } else {
+    for (let i = 0; i < W * H; i++) out[i] = gray[i] < thr ? 1 : 0;
+  }
+  bmp = out; redBmp = red;
+  if (redCount) log(`检测到 ${redCount} 个红色像素（走红平面）`);
+  drawPreview();
+}
+
+function testPattern() {
+  const off = document.createElement('canvas');
+  off.width = W; off.height = H;
+  const c = off.getContext('2d');
+  c.fillStyle = '#fff'; c.fillRect(0, 0, W, H);
+  c.fillStyle = '#000';
+  // 最外圈 1px 边框：检验 152×152 全覆盖
+  c.fillRect(0, 0, W, 1); c.fillRect(0, H - 1, W, 1);
+  c.fillRect(0, 0, 1, H); c.fillRect(W - 1, 0, 1, H);
+  // 四角 L 形标记（臂 14px / 粗 3px，内缩 5px）
+  const arm = 14, th = 3, inset = 5;
+  c.fillRect(inset, inset, arm, th); c.fillRect(inset, inset, th, arm);                                   // 左上
+  c.fillRect(W - inset - arm, inset, arm, th); c.fillRect(W - inset - th, inset, th, arm);                // 右上
+  c.fillRect(inset, H - inset - th, arm, th); c.fillRect(inset, H - inset - arm, th, arm);                // 左下
+  c.fillRect(W - inset - arm, H - inset - th, arm, th); c.fillRect(W - inset - th, H - inset - arm, th, arm); // 右下
+  // 左上角实心三角（方向指示：应出现在实物左上角）
+  c.beginPath(); c.moveTo(16, 16); c.lineTo(44, 16); c.lineTo(16, 44); c.closePath(); c.fill();
+  // 右上角红色实心三角（与左上黑三角镜像对照：校验红平面方向/偏移与黑白平面一致）
+  c.fillStyle = '#f00';
+  c.beginPath(); c.moveTo(W - 16, 16); c.lineTo(W - 44, 16); c.lineTo(W - 16, 44); c.closePath(); c.fill();
+  // 全宽红色横条（校验红平面 X 方向全覆盖）
+  c.fillRect(0, 106, W, 8);
+  // 中心文字
+  c.fillStyle = '#000';
+  c.font = 'bold 30px Consolas, monospace';
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText('152×152', W / 2, H / 2 - 14);
+  c.font = 'bold 16px Consolas, monospace';
+  c.fillText('NOWA TEST', W / 2, H / 2 + 16);
+  const d = c.getImageData(0, 0, W, H).data;
+  bmp = new Uint8Array(W * H);
+  redBmp = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
+    if (isRedPixel(r, g, b)) redBmp[i] = 1;
+    else if (0.299 * r + 0.587 * g + 0.114 * b < 128) bmp[i] = 1;
+  }
+  srcImage = null;
+  drawPreview();
+  if (charEPD) $('btnSend').disabled = false;
+  log('已生成测试图案（边框 + 四角标记 + 黑/红方向三角 + 红色横条）');
+}
+
+// ---- 变换 ----
+function transform(kind) {
+  if (!bmp) return;
+  const src = bmp, dst = new Uint8Array(W * H);
+  const rsrc = redBmp || new Uint8Array(W * H), rdst = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    let nx, ny;
+    if (kind === 'rot')   { nx = H - 1 - y; ny = x; }        // 顺时针 90°
+    if (kind === 'fliph') { nx = W - 1 - x; ny = y; }
+    if (kind === 'flipv') { nx = x; ny = H - 1 - y; }
+    if (kind === 'inv')   { nx = x; ny = y; }
+    dst[ny * W + nx] = kind === 'inv' ? 1 - src[y * W + x] : src[y * W + x];
+    rdst[ny * W + nx] = rsrc[y * W + x]; // 红平面随几何变换同步；反相不动红色
+  }
+  bmp = dst; redBmp = rdst; drawPreview();
+}
+
+function drawPreview() {
+  const cv = $('preview'), ctx = cv.getContext('2d');
+  const img = ctx.createImageData(W, H);
+  for (let i = 0; i < W * H; i++) {
+    const o = i * 4;
+    if (redBmp && redBmp[i]) {
+      img.data[o] = 196; img.data[o + 1] = 22; img.data[o + 2] = 22; // 近似墨水屏红
+    } else {
+      const v = bmp ? (bmp[i] ? 0 : 255) : 255;
+      img.data[o] = img.data[o + 1] = img.data[o + 2] = v;
+    }
+    img.data[o + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// ---- 蓝牙 ----
+function bleAvailable() {
+  if (!navigator.bluetooth) {
+    log('✗ 当前浏览器不支持 Web Bluetooth，请用 Chrome / Edge 打开本页');
+    alert('需要 Chrome 或 Edge 浏览器（Web Bluetooth）。若从文件打开被拦截，可用 python -m http.server 走 localhost。');
+    return false;
+  }
+  return true;
+}
+
+// 与 atc1441 原版相同的重试语义：此标签在部分电脑上 GATT 发现有随机失败率，
+// 原版页靠静默重试最多 6 次掩盖（handleError → connect 循环），单次尝试必偶发失败
+async function gattDiscover(maxAttempts) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      log(`连接尝试 ${attempt}/${maxAttempts}…`);
+      server = await device.gatt.connect();
+      const svc = await server.getPrimaryService(EPD_SERVICE);
+      charEPD = await svc.getCharacteristic(EPD_CHAR);
+      try { // RxTx 通道（时间同步用）：同样按 UUID 单查；个别固件可能缺失，不阻断连接
+        charRxTx = await (await server.getPrimaryService(RXTX_SERVICE)).getCharacteristic(RXTX_CHAR);
+      } catch (_) { charRxTx = null; }
+      return true;
+    } catch (e) {
+      lastErr = e;
+      log('  失败：' + e.message);
+      if (device.gatt && device.gatt.connected) { try { device.gatt.disconnect(); } catch (_) {} }
+      await new Promise(r => setTimeout(r, 400));
+    }
+  }
+  throw lastErr;
+}
+
+async function connect() {
+  if (!bleAvailable()) return;
+  connecting = true;
+  try {
+    log('请选择设备（名称以 ESL_ 开头）…');
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [EPD_SERVICE, RXTX_SERVICE]
+    });
+    device.addEventListener('gattserverdisconnected', onDisconnect);
+    await gattDiscover(6);
+    log(`✓ 已连接 ${device.name || '(未命名)'}，EPD 特征就绪${charRxTx ? '，RxTx 就绪（时间同步可用）' : '；未找到 RxTx 服务，时间同步不可用'}`);
+    updateBleUI(true);
+  } catch (e) { log('✗ 连接失败：' + e.message); resetBle(); }
+  finally { connecting = false; }
+}
+
+// 复用已授权设备重连（不再弹选择器）
+async function reconnect() {
+  if (!device || connecting) return;
+  connecting = true;
+  try {
+    await gattDiscover(6);
+    log(`✓ 已连接 ${device.name || '(未命名)'}，EPD 特征就绪${charRxTx ? '，RxTx 就绪（时间同步可用）' : '；未找到 RxTx 服务，时间同步不可用'}`);
+    updateBleUI(true);
+  } catch (e) { log('✗ 重连失败：' + e.message); }
+  finally { connecting = false; }
+}
+
+function onDisconnect() {
+  if (connecting) return; // connect() 重试循环内的主动断开
+  log('设备已断开');
+  resetBle();
+}
+function resetBle() {
+  // 必须显式断开：BLE 外设处于连接态时停止广播，泄漏的连接会让标签从扫描里消失
+  if (device && device.gatt && device.gatt.connected) {
+    try { device.gatt.disconnect(); } catch (e) { /* 已断开则忽略 */ }
+  }
+  server = null; charEPD = null; charRxTx = null; sending = false; // 保留 device 供"重连"复用
+  updateBleUI(false);
+}
+function updateBleUI(connected) {
+  $('dot').className = 'status-dot' + (connected ? ' on' : '');
+  $('bleStatus').textContent = connected ? '已连接' : (device ? '未连接（可重连）' : '未连接');
+  $('btnSend').disabled = !connected || !bmp;
+  $('btnClock').disabled = !connected;
+  $('btnTimeSync').disabled = !connected || !charRxTx;
+  $('btnDisc').disabled = !connected;
+  $('btnConnect').disabled = connected;
+  $('btnReconn').disabled = connected || !device;
+}
+
+async function write(bytes, note) {
+  await charEPD.writeValue(new Uint8Array(bytes));
+  if (note) log(note);
+}
+
+async function sendImage() {
+  if (!charEPD || !bmp || sending) return;
+  sending = true; $('btnSend').disabled = true;
+  const t0 = performance.now();
+  try {
+    const buf = packBuffer(bmp);
+    const rbuf = redBmp ? packRedBuffer(redBmp) : null;
+    const hasRed = !!(rbuf && rbuf.some(v => v !== 0));
+    const total = BUF_SIZE + (hasRed ? BUF_SIZE : 0);
+    let sent = 0;
+    const chunks = Math.ceil(BUF_SIZE / CHUNK);
+    const uploadPlane = async (data, name) => {
+      let off = 0, part = 0;
+      while (off < BUF_SIZE) {
+        const take = Math.min(CHUNK, BUF_SIZE - off);
+        const frame = new Uint8Array(1 + take);
+        frame[0] = 0x03;
+        frame.set(data.subarray(off, off + take), 1);
+        await charEPD.writeValue(frame);
+        off += take; sent += take;
+        setProgress(sent / total);
+        if (++part % 4 === 0 || off >= BUF_SIZE)
+          log(`  ${name}平面分包 ${part}/${chunks} … ${sent}/${total} 字节`);
+      }
+    };
+    log(`发送 ${total} 字节（黑白${hasRed ? ' + 红' : ''}平面）…`);
+    await write([0x05, 0x01], '锁定图片模式（0x05 01）');
+    await write([0x00, 0xFF], '清双平面为白 + 提速（00 FF）');
+    await write([0x02, 0x00, 0x00], '黑白平面写指针归零（02 00 00）');
+    await uploadPlane(buf, '黑白');
+    if (hasRed) {
+      await write([0x06, 0x01], '切换红平面 + 指针归零（06 01）');
+      await uploadPlane(rbuf, '红');
+    }
+    await write([0x01], '触发全刷（01），屏幕刷新约 2~4 秒…');
+    const sec = ((performance.now() - t0) / 1000).toFixed(1);
+    log(`✓ 发送完成，用时 ${sec}s（刷新结束后图即定屏，不会再被时钟覆盖）`);
+    setTimeout(() => { sending = false; if (charEPD) $('btnSend').disabled = false; }, 5000);
+  } catch (e) {
+    log('✗ 发送失败：' + e.message + '（若已断线请重新连接）');
+    setProgress(0); sending = false;
+    if (charEPD) $('btnSend').disabled = false;
+  }
+}
+
+async function resumeClock() {
+  if (!charEPD) return;
+  try {
+    await write([0x05, 0x00], '解除锁定（05 00），固件将立即重画时钟表盘');
+  } catch (e) { log('✗ 失败：' + e.message); }
+}
+
+// ---- 时间同步 ----
+// 表盘对发送值直接取模显示（无时区概念），故发送 = unix 秒 + 浏览器时区 + 手动偏移
+function tzMinutes() { return -new Date().getTimezoneOffset(); }
+function offsetMinutes() {
+  const v = parseInt($('timeOffset').value, 10);
+  if (Number.isNaN(v)) return 0;
+  return Math.max(-720, Math.min(720, v));
+}
+function fmtOffset(min) {
+  const a = Math.abs(min);
+  return `${min < 0 ? '-' : '+'}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`;
+}
+function updateTimePanel() {
+  const tz = tzMinutes(), off = offsetMinutes();
+  $('tzInfo').textContent = fmtOffset(tz);
+  $('deviceTime').textContent = new Date(Date.now() + off * 60000).toTimeString().slice(0, 8);
+  $('offsetDetail').textContent = `（时区 ${fmtOffset(tz)}${off ? `，偏移 ${off > 0 ? '+' : ''}${off} 分` : ''}）`;
+}
+
+async function syncTime() {
+  if (!charRxTx || timeSyncing) return;
+  timeSyncing = true; $('btnTimeSync').disabled = true;
+  try {
+    const t = Math.floor(Date.now() / 1000) + (tzMinutes() + offsetMinutes()) * 60;
+    const frame = [0xDD, (t >>> 24) & 0xFF, (t >>> 16) & 0xFF, (t >>> 8) & 0xFF, t & 0xFF];
+    await charRxTx.writeValue(new Uint8Array(frame));
+    const show = new Date(Date.now() + offsetMinutes() * 60000).toTimeString().slice(0, 5);
+    log(`✓ 时间已同步：${frame.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ')}，表盘将显示 ${show}`);
+  } catch (e) { log('✗ 时间同步失败：' + e.message); }
+  finally { timeSyncing = false; $('btnTimeSync').disabled = !charRxTx; }
+}
+
+// ---- 事件绑定 ----
+$('btnFile').onclick = () => $('fileInput').click();
+$('fileInput').onchange = e => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ''; };
+$('btnTest').onclick = testPattern;
+$('btnRot').onclick = () => transform('rot');
+$('btnFlipH').onclick = () => transform('fliph');
+$('btnFlipV').onclick = () => transform('flipv');
+$('btnInv').onclick = () => transform('inv');
+$('btnConnect').onclick = connect;
+$('btnReconn').onclick = reconnect;
+$('btnSend').onclick = sendImage;
+$('btnClock').onclick = resumeClock;
+$('btnTimeSync').onclick = syncTime;
+$('timeOffset').oninput = () => {
+  updateTimePanel();
+  try { localStorage.setItem('epaper_timeOffset', $('timeOffset').value); } catch (_) {}
+};
+$('btnDisc').onclick = () => { if (server) server.disconnect(); };
+$('ditherMode').onchange = renderPipeline;
+$('threshold').oninput = e => { $('thresholdVal').textContent = e.target.value; renderPipeline(); };
+document.querySelectorAll('input[name=fit]').forEach(r => r.onchange = renderPipeline);
+
+const dz = $('dropZone');
+dz.ondragover = e => { e.preventDefault(); dz.style.outline = '3px dashed #0366d6'; };
+dz.ondragleave = () => dz.style.outline = '';
+dz.ondrop = e => { e.preventDefault(); dz.style.outline = '';
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); };
+document.addEventListener('paste', e => {
+  for (const item of e.clipboardData.items)
+    if (item.type.startsWith('image/')) { loadFile(item.getAsFile()); break; }
+});
+
+async function loadFile(file) {
+  try {
+    srcImage = await createImageBitmap(file);
+    log(`已载入 ${file.name || '剪贴板图片'}（${srcImage.width}×${srcImage.height}）`);
+    renderPipeline();
+    if (charEPD) $('btnSend').disabled = false;
+  } catch (e) { log('✗ 图片载入失败：' + e.message); }
+}
+
+// 初始空白预览
+drawPreview();
+// 时间面板：恢复上次偏移并开始每秒刷新预览
+let savedOff = NaN;
+try { savedOff = parseInt(localStorage.getItem('epaper_timeOffset'), 10); } catch (_) {}
+if (!Number.isNaN(savedOff)) $('timeOffset').value = Math.max(-720, Math.min(720, savedOff));
+updateTimePanel();
+setInterval(updateTimePanel, 1000);
+log('就绪。载入图片或生成测试图案 → 连接设备 → 发送。');
+log('提示：若浏览器拦截 file:// 的蓝牙权限，改用  python -m http.server  后访问 localhost。');
+</script>
+</body>
+</html>

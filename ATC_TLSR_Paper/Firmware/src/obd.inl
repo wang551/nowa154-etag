@@ -1763,8 +1763,12 @@ GFXfont font;
 GFXglyph glyph, *pGlyph;
 int iPitch;
    
-   if (pOBD == NULL || pFont == NULL || pOBD->ucScreen == NULL || x < 0)
+   if (pOBD == NULL || pFont == NULL || pOBD->ucScreen == NULL)
       return -1;
+   // x may be negative: callers optically center strings whose first glyphs have
+   // narrow ink but wide advance (e.g. DSEG14 '1'), putting the pen left of 0.
+   // Pixel writes below are clipped to the line, so leading pixels are dropped
+   // instead of writing before the buffer.
    iPitch = pOBD->width;
    // in case of running on AVR, get copy of data from FLASH
    memcpy_P(&font, pFont, sizeof(font));
@@ -1817,10 +1821,12 @@ int iPitch;
                }
             } // if we ran out of bits
             if (uc & 0x80) { // set pixel
-               if (ucClr)
-                  d[tx] |= ucMask;
-               else
-                  d[tx] &= ~ucMask;
+               if (dx + tx >= 0 && dx + tx < iPitch) { // clip to this scanline
+                  if (ucClr)
+                     d[tx] |= ucMask;
+                  else
+                     d[tx] &= ~ucMask;
+               }
             }
             bits--; // next bit
             uc <<= 1;

@@ -1,6 +1,6 @@
 Firmware/out/*
-Firmware/tc32_linux
-Firmware/tc32_windows
+# 上游原版忽略工具链目录，但本仓库随源码分发 tc32 工具链（与上游发布的仓库内容一致），
+# 故不再忽略 Firmware/tc32_linux 与 Firmware/tc32_windows。
 flashing
 flash.bat
 Firmware_test_gpio

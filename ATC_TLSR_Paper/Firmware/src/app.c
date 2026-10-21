@@ -21,6 +21,13 @@ RAM int16_t temperature;
 RAM uint8_t hour_refresh = 100;
 RAM uint8_t minute_refresh = 100;
 
+// Called when the BLE image hold is released: invalidate minute_refresh so the
+// next main_loop pass redraws the clock immediately (visible confirmation).
+void epd_resume_clock(void)
+{
+    minute_refresh = 100;
+}
+
 // Settings
 extern settings_struct settings;
 
@@ -59,7 +66,7 @@ _attribute_ram_code_ void main_loop(void)
     }
 
     uint8_t current_minute = (get_time() / 60) % 60;
-    if (current_minute != minute_refresh)
+    if (current_minute != minute_refresh && !epd_hold_image) // hold: keep BLE-uploaded image instead of the clock
     {
         minute_refresh = current_minute;
         uint8_t current_hour = ((get_time() / 60) / 60) % 24;

@@ -908,7 +908,7 @@ static u8 battery_inter = 59;
 void mi_event_beacon_send()
 {
 	// this code is just for test part .
-	if (get_mi_reg_stat()){
+	if (get_mi_reg_stat()){
 	 #if (MI_USER_MODE == MI_HUMI_TEMP_MODE)
 		if(mi_event_min % 11 == 0){
 			static u16 mi_temp = 200;

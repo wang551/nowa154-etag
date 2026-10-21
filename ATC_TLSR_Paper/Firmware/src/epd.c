@@ -25,10 +25,11 @@ extern const uint8_t ucMirror[];
 RAM uint8_t epd_model = 0; // 0 = Undetected, 1 = BW213, 2 = BWR213, 3 = BWR154, 4 = BW213ICE, 5 = BWR350
 const char *epd_model_string[] = {"NC", "BW213", "BWR213", "BWR154", "213ICE", "BWR350", "BWY350"};
 RAM uint8_t epd_update_state = 0;
+RAM uint8_t epd_hold_image = 0;
 
 const char *BLE_conn_string[] = {"", "B"};
 RAM uint8_t epd_temperature_is_read = 0;
-RAM uint8_t epd_temperature = 0;
+RAM int8_t epd_temperature = 0; // 0x1B register: two's complement, negative below 0°C
 
 uint8_t epd_buffer[epd_buffer_size];
 uint8_t epd_temp[epd_buffer_size]; // for OneBitDisplay to draw into
@@ -72,11 +73,14 @@ _attribute_ram_code_ void EPD_detect_model(void)
     {
         epd_model = 1;
     }
+    // Nowa-154R-N: the 154 controller answers the 213 probe the same way (branch above
+    // always wins), so detection can never pick the square panel; force the 1.54" driver.
+    epd_model = 3;
 
     EPD_POWER_OFF();
 }
 
-_attribute_ram_code_ uint8_t EPD_read_temp(void)
+_attribute_ram_code_ int8_t EPD_read_temp(void)
 {
     if (epd_temperature_is_read)
         return epd_temperature;
@@ -114,7 +118,7 @@ _attribute_ram_code_ uint8_t EPD_read_temp(void)
     return epd_temperature;
 }
 
-_attribute_ram_code_ void EPD_Display(unsigned char *image, int size, uint8_t full_or_partial)
+_attribute_ram_code_ void EPD_Display(unsigned char *image, unsigned char *red_image, int size, uint8_t full_or_partial)
 {
     if (!epd_model)
         EPD_detect_model();
@@ -134,7 +138,7 @@ _attribute_ram_code_ void EPD_Display(unsigned char *image, int size, uint8_t fu
     else if (epd_model == 2)
         epd_temperature = EPD_BWR_213_Display(image, size, full_or_partial);
     else if (epd_model == 3)
-        epd_temperature = EPD_BWR_154_Display(image, size, full_or_partial);
+        epd_temperature = EPD_BWR_154_Display(image, red_image, size, full_or_partial);
     else if (epd_model == 4)
         epd_temperature = EPD_BW_213_ice_Display(image, size, full_or_partial);
     else if (epd_model == 5)
@@ -206,16 +210,21 @@ _attribute_ram_code_ void FixBuffer(uint8_t *pSrc, uint8_t *pDst, uint16_t width
     }                                                          // for y
 }
 
+// TIFF source geometry for TIFFDraw(), set by epd_display_tiff() per epd_model
+RAM uint16_t epd_tiff_width = 250;
+RAM uint16_t epd_tiff_stride = 16; // bytes per source column = (height+7)/8
+RAM uint8_t epd_tiff_yoff = 0;     // extra source-axis offset (model 3 glass)
+
 _attribute_ram_code_ void TIFFDraw(TIFFDRAW *pDraw)
 {
     uint8_t uc = 0, ucSrcMask, ucDstMask, *s, *d;
     int x, y;
 
     s = pDraw->pPixels;
-    y = pDraw->y;                          // current line
-    d = &epd_buffer[(249 * 16) + (y / 8)]; // rotated 90 deg clockwise
-    ucDstMask = 0x80 >> (y & 7);           // destination mask
-    ucSrcMask = 0;                         // src mask
+    y = pDraw->y;                                                        // current line
+    d = &epd_buffer[((epd_tiff_width - 1) * epd_tiff_stride) + ((y + epd_tiff_yoff) / 8)]; // rotated 90 deg clockwise
+    ucDstMask = 0x80 >> ((y + epd_tiff_yoff) & 7);                       // destination mask
+    ucSrcMask = 0;                                                 // src mask
     for (x = 0; x < pDraw->iWidth; x++)
     {
         // Slower to draw this way, but it allows us to use a single buffer
@@ -227,7 +236,7 @@ _attribute_ram_code_ void TIFFDraw(TIFFDRAW *pDraw)
         }
         if (!(uc & ucSrcMask))
         { // black pixel
-            d[-(x * 16)] &= ~ucDstMask;
+            d[-(x * epd_tiff_stride)] &= ~ucDstMask;
         }
         ucSrcMask >>= 1;
     }
@@ -235,16 +244,62 @@ _attribute_ram_code_ void TIFFDraw(TIFFDRAW *pDraw)
 
 _attribute_ram_code_ void epd_display_tiff(uint8_t *pData, int iSize)
 {
+    uint16_t width = 250, height = 122;
+    if (!epd_model)
+        EPD_detect_model();
+    if (epd_model == 3)
+    { // square 1.54" panel, Nowa-154R-N is 152x152 behind a source-axis offset
+        width = 152;
+        height = 152;
+        epd_tiff_stride = BWR_154_SRC_BYTES;
+        epd_tiff_yoff = BWR_154_SRC_OFFSET;
+    }
+    else
+    {
+        epd_tiff_stride = (height + 7) / 8;
+        epd_tiff_yoff = 0;
+    }
+    epd_tiff_width = width;
+
     // test G4 decoder
     memset(epd_buffer, 0xff, epd_buffer_size); // clear to white
-    TIFF_openRAW(&tiff, 250, 122, BITDIR_MSB_FIRST, pData, iSize, TIFFDraw);
-    TIFF_setDrawParameters(&tiff, 65536, TIFF_PIXEL_1BPP, 0, 0, 250, 122, NULL);
+    TIFF_openRAW(&tiff, width, height, BITDIR_MSB_FIRST, pData, iSize, TIFFDraw);
+    TIFF_setDrawParameters(&tiff, 65536, TIFF_PIXEL_1BPP, 0, 0, width, height, NULL);
     TIFF_decode(&tiff);
     TIFF_close(&tiff);
-    EPD_Display(epd_buffer, epd_buffer_size, 1);
+    EPD_Display(epd_buffer, NULL, epd_buffer_size, 1);
 }
 
 extern uint8_t mac_public[6];
+
+// Horizontal ink extents of a string (bitmap pixels, not advances), relative to
+// the pen origin. Used to optically center/right-align text whose glyphs have
+// narrow ink but wide advance (DSEG14 '1' is ~4px ink in a 29px advance, which
+// makes advance-based centering land ~8px off true center).
+static void epd_ink_extent(const GFXfont *pFont, const char *szMsg, int *left, int *right)
+{
+    int pen = 0, l = 0x7fff, r = -0x7fff;
+    for (; *szMsg; szMsg++)
+    {
+        uint8_t c = (uint8_t)*szMsg;
+        if (c < pFont->first || c > pFont->last)
+            continue;
+        const GFXglyph *g = &pFont->glyph[c - pFont->first];
+        if (g->width)
+        {
+            if (pen + g->xOffset < l)
+                l = pen + g->xOffset;
+            if (pen + g->xOffset + g->width > r)
+                r = pen + g->xOffset + g->width;
+        }
+        pen += g->xAdvance;
+    }
+    if (l > r)
+        l = r = 0; // no printable glyphs
+    *left = l;
+    *right = r;
+}
+
 _attribute_ram_code_ void epd_display(uint32_t time_is, uint16_t battery_mv, int16_t temperature, uint8_t full_or_partial)
 {
     if (epd_update_state)
@@ -268,8 +323,8 @@ _attribute_ram_code_ void epd_display(uint32_t time_is, uint16_t battery_mv, int
     }
     else if (epd_model == 3)
     {
-        resolution_w = 200;
-        resolution_h = 200;
+        resolution_w = 152;
+        resolution_h = BWR_154_CANVAS_H; // content is drawn shifted down by BWR_154_SRC_OFFSET
     }
     else if (epd_model == 4)
     {
@@ -287,22 +342,51 @@ _attribute_ram_code_ void epd_display(uint32_t time_is, uint16_t battery_mv, int
         resolution_h = 128; // 122 real pixel, but needed to have a full byte
     }
 
+    uint16_t yoff = (epd_model == 3) ? BWR_154_SRC_OFFSET : 0;
     obdCreateVirtualDisplay(&obd, resolution_w, resolution_h, epd_temp);
     obdFill(&obd, 0, 0); // fill with white
 
     char buff[100];
-    sprintf(buff, "ESL_%02X%02X%02X %s", mac_public[2], mac_public[1], mac_public[0], epd_model_string[epd_model]);
-    obdWriteStringCustom(&obd, (GFXfont *)&Dialog_plain_16, 1, 17, (char *)buff, 1);
-    sprintf(buff, "%s", BLE_conn_string[ble_get_connected()]);
-    obdWriteStringCustom(&obd, (GFXfont *)&Dialog_plain_16, 232, 20, (char *)buff, 1);
-    sprintf(buff, "%02d:%02d", ((time_is / 60) / 60) % 24, (time_is / 60) % 60);
-    obdWriteStringCustom(&obd, (GFXfont *)&DSEG14_Classic_Mini_Regular_40, 50, 65, (char *)buff, 1);
-    sprintf(buff, "%d'C", EPD_read_temp());
-    obdWriteStringCustom(&obd, (GFXfont *)&Special_Elite_Regular_30, 10, 95, (char *)buff, 1);
-    sprintf(buff, "Battery %dmV", battery_mv);
-    obdWriteStringCustom(&obd, (GFXfont *)&Dialog_plain_16, 10, 120, (char *)buff, 1);
+    if (epd_model == 3)
+    {
+        // Square-glass dashboard (152x152, vision-reviewed): header line with BLE
+        // status square, two rule lines, optically centered DSEG14 clock as the
+        // focal element, temp/battery footer on a shared baseline, model caption.
+        int l, r;
+        sprintf(buff, "ESL_%02X%02X%02X", mac_public[2], mac_public[1], mac_public[0]);
+        obdWriteStringCustom(&obd, (GFXfont *)&Dialog_plain_16, 8, yoff + 20, buff, 1);
+        if (ble_get_connected()) // status LED, top-right
+            obdRectangle(&obd, 136, yoff + 10, 143, yoff + 17, 1, 1);
+        obdDrawLine(&obd, 8, yoff + 30, 143, yoff + 30, 1, 0);
+        sprintf(buff, "%02d:%02d", ((time_is / 60) / 60) % 24, (time_is / 60) % 60);
+        epd_ink_extent(&DSEG14_Classic_Mini_Regular_40, buff, &l, &r);
+        obdWriteStringCustom(&obd, (GFXfont *)&DSEG14_Classic_Mini_Regular_40,
+                            76 - (l + r) / 2, yoff + 84, buff, 1);
+        obdDrawLine(&obd, 8, yoff + 96, 143, yoff + 96, 1, 0);
+        sprintf(buff, "%d'C", EPD_read_temp());
+        obdWriteStringCustom(&obd, (GFXfont *)&Special_Elite_Regular_30, 8, yoff + 124, buff, 1);
+        sprintf(buff, "%d.%02dV", battery_mv / 1000, (battery_mv % 1000) / 10);
+        epd_ink_extent(&Dialog_plain_16, buff, &l, &r);
+        obdWriteStringCustom(&obd, (GFXfont *)&Dialog_plain_16, 143 - r, yoff + 124, buff, 1);
+        epd_ink_extent(&Dialog_plain_16, epd_model_string[epd_model], &l, &r);
+        obdWriteStringCustom(&obd, (GFXfont *)&Dialog_plain_16, 76 - (l + r) / 2, yoff + 144,
+                            (char *)epd_model_string[epd_model], 1);
+    }
+    else
+    {
+        sprintf(buff, "ESL_%02X%02X%02X %s", mac_public[2], mac_public[1], mac_public[0], epd_model_string[epd_model]);
+        obdWriteStringCustom(&obd, (GFXfont *)&Dialog_plain_16, 1, yoff + 17, (char *)buff, 1);
+        sprintf(buff, "%s", BLE_conn_string[ble_get_connected()]);
+        obdWriteStringCustom(&obd, (GFXfont *)&Dialog_plain_16, 132, yoff + 20, (char *)buff, 1);
+        sprintf(buff, "%02d:%02d", ((time_is / 60) / 60) % 24, (time_is / 60) % 60);
+        obdWriteStringCustom(&obd, (GFXfont *)&DSEG14_Classic_Mini_Regular_40, 50, yoff + 65, (char *)buff, 1);
+        sprintf(buff, "%d'C", EPD_read_temp());
+        obdWriteStringCustom(&obd, (GFXfont *)&Special_Elite_Regular_30, 10, yoff + 95, (char *)buff, 1);
+        sprintf(buff, "Battery %dmV", battery_mv);
+        obdWriteStringCustom(&obd, (GFXfont *)&Dialog_plain_16, 10, yoff + 120, (char *)buff, 1);
+    }
     FixBuffer(epd_temp, epd_buffer, resolution_w, resolution_h);
-    EPD_Display(epd_buffer, resolution_w * resolution_h / 8, full_or_partial);
+    EPD_Display(epd_buffer, NULL, resolution_w * resolution_h / 8, full_or_partial);
 }
 
 _attribute_ram_code_ void epd_display_char(uint8_t data)
@@ -312,7 +396,7 @@ _attribute_ram_code_ void epd_display_char(uint8_t data)
     {
         epd_buffer[i] = data;
     }
-    EPD_Display(epd_buffer, epd_buffer_size, 1);
+    EPD_Display(epd_buffer, NULL, epd_buffer_size, 1);
 }
 
 _attribute_ram_code_ void epd_clear(void)
