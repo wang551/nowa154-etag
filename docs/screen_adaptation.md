@@ -68,4 +68,3 @@
 
 - **make 不跟踪头文件依赖**：改 `epd_bwr_154.h` 宏后必须 `rm -rf out ATC_Paper.bin`
   全量重编，否则产物 md5 与旧版完全相同（现象是"改了没生效"）
-- tc32-elf-gcc 4.5.1 随机 ICE，重跑即可（`tools/build_retry.sh`）

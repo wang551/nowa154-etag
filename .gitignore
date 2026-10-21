@@ -6,7 +6,7 @@ __pycache__/
 # 私有研究资料（厂商版权 PDF、交接文档等，不随仓库分发）
 _local/
 
-# 构建产物（构建不可复现：同源码两次构建 md5 不同；发布固件在 bin/）
+# 构建产物（对外发布固件放 bin/ 并在 README 版本表登记 md5）
 ATC_TLSR_Paper/Firmware/out/
 ATC_TLSR_Paper/Firmware/ATC_Paper.bin
 tools/build.log
