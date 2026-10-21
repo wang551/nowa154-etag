@@ -1,4 +1,4 @@
-# Nowa154-ESL：汉朔 Nowa-154R-N 电子价签开源固件
+# nowa154-etag — 汉朔 Nowa-154R-N 电子价签开源固件
 
 > **English TL;DR** — Open firmware adaptation for the Hanshow **Nowa-154R-N** e-paper
 > shelf label (1.54" 152×152 black/white/**red** + NFC + BLE, Telink TLSR8359).
@@ -73,10 +73,9 @@
 
 需要安装 Python。Windows 下进入 `ATC_TLSR_Paper/Firmware/` 运行 `makeit.exe`，Linux 下 `make`（tc32 工具链已随仓库自带）。
 
-两个已知的坑：
+一个已知的坑：
 
-1. **tc32-elf-gcc 4.5.1 随机 internal compiler error**（`decl_attributes`，单文件约 10–20% 概率）：增量重跑即可收敛，直接用 `tools/build_retry.sh`（循环重试直到成功）
-2. **make 不跟踪头文件依赖**：改过 `*.h` 后必须先删 `out/` 和 `ATC_Paper.bin` 强制全量重编，否则产物与旧版 md5 完全相同
+1. **make 不跟踪头文件依赖**：改过 `*.h` 后必须先删 `out/` 和 `ATC_Paper.bin` 强制全量重编，否则产物与旧版 md5 完全相同
 
 ## 文档
 
