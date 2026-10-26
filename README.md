@@ -5,8 +5,8 @@
 > It is a fork of [atc1441/ATC_TLSR_Paper](https://github.com/atc1441/ATC_TLSR_Paper)
 > with a properly reverse-engineered 152×152 panel driver (gate window 144..295,
 > source offset +8), two new BLE commands (image hold, red plane), a fix for an
-> upstream BLE advertising bug, and a single-file web upload tool with dithering
-> and red-channel extraction. Flash over UART with a web flasher — no EVK needed.
+> upstream BLE advertising bug, and a single-file web upload tool with dithering,
+> red-channel extraction and verified BLE OTA (two-step flash confirmation). Flash over UART with a web flasher — no EVK needed.
 
 把闲置换下来的汉朔电子价签刷成**可自由传图的 BLE 三色墨水屏标签**：
 自定义图片/时钟/温湿度显示，黑白红三色，手机浏览器直连传图。
@@ -24,15 +24,16 @@
 | **`0x06` 红平面命令** | 三色屏红平面全链路：`EPD_Display()` 增加红图参数，BLE 可切换 `0x03` 写入目标平面。旧固件收到 `0x06` 走 default 忽略，安全降级 |
 | **顺手修正** | `EPD_*_read_temp()` 返回值改 `int8_t`（负温度不再溢出）；OneBitDisplay 负 x 坐标字符串绘制越界裁剪（`obd.inl`） |
 | **网页传图工具** | `web_tools/nowa152_image_upload.html`：单文件零依赖，阈值/Floyd–Steinberg/Bayer 抖动、红像素提取、旋转翻转、内置方向校准测试图案、BLE 直发 |
+| **网页 OTA 刷写** | 同一网页工具内置蓝牙刷固件：整暂存区擦除 → 传输 → 设备端字节和校验 → 两步确认后才发刷入命令，任何异常都不触碰运行固件（上游 OTA 页无任何校验，传坏即刷坏）。协议细节见 [docs/ble_protocol.md](docs/ble_protocol.md) |
 
 ## 仓库结构
 
 ```
 ├── ATC_TLSR_Paper/        # 固件源码（上游快照 + 本 fork 改动，自带 tc32 工具链）
 │   └── Firmware/src/      #   改动集中在 epd*.c/h、app.c、ble.c、epd_ble_service.c
-├── web_tools/             # 网页传图工具（单 HTML，Chrome/Edge）
+├── web_tools/             # 网页传图 / OTA 工具（单 HTML，Chrome/Edge）
 ├── bin/                   # 可直接刷写的固件
-├── tools/                 # 构建重试脚本、152×152 布局预览器（Python）
+├── tools/                 # 构建重试、布局预览、BLE OTA/EEPROM 控制台 CLI、NFC 日志解析、SWS 读回（Python）
 └── docs/                  # 硬件笔记、屏适配推导、BLE 协议
 ```
 
@@ -58,16 +59,32 @@
 
 完整 BLE 命令与像素打包公式见 [docs/ble_protocol.md](docs/ble_protocol.md)。
 
+### 固件 OTA（BLE）
+
+不想接 UART 线时，用同一网页工具的「固件 OTA」区蓝牙刷固件：
+
+1. 连接设备 → 「选择固件 .bin…」（自动校验 Telink 魔数 KNLT、大小上限，算 md5 并与下方版本表比对）
+2. 点「① 传输并校验」：只写设备 128KB 暂存区，**不碰运行中的固件**，失败 / 断连可反复重试（约 40 秒）
+3. 设备端字节和与本地一致后才解锁「② 确认刷入」：点击后设备擦写自身并重启（约 5~10 秒），**期间切勿断开连接或取出电池**
+4. 刷入瞬间断电没有 bootloader 可回滚，只能 UART 救（见上节）
+
+命令行场景（自动化 / 无浏览器）可用 [tools/ble_ota_flash.py](tools/ble_ota_flash.py)：`python tools/ble_ota_flash.py flash <bin>` 刷写、`readback` 读回 NFC 探测结果区，协议与网页工具一致（含 cmd6 校验与守卫复位握手）。
+
 ## 固件版本
 
 | 文件 | md5 | 状态 |
 |---|---|---|
-| `bin/ATC_Paper_nowa154_final.bin` | `ef7456e09df34ead39cc581be6cfa968` | ✅ 稳定版（真机验证：屏贴合、传图像素级正确） |
-| `bin/ATC_Paper_nowa154_red.bin` | `12943dd8b46d049dbaa6fb8513e50ec4` | 🔬 最新构建：红通道 + 温度符号修正 + 广播恢复修复。红通道尚未真机验证（判读方法见下） |
+| `bin/ATC_Paper_nowa154_final.bin` | `ef7456e09df34ead39cc581be6cfa968` | 旧稳定版（黑白传图，已被 `_red` 取代） |
+| `bin/ATC_Paper_nowa154_red.bin` | `12943dd8b46d049dbaa6fb8513e50ec4` | 稳定版（真机验证：红通道显示正常 + 传图像素级正确 + 温度符号；显示功能已被 `_v42daily` 收编，保留作回退） |
+| `bin/ATC_Paper_nowa154_v42daily.bin` | `59c4b63c9195fa50c7014996660394c7` | ✅ **推荐日常版**（2026-10-26 NFC 收档）：= v41 撤销实验期强制锁屏与常驻抓取器——时钟分钟刷新恢复、suspend 低功耗恢复；NFC 冷启动探测 + BLE 控制台保留，碰卡时手机有"有卡"提示（防冲突 + RATS 由芯片硬件自应答；无 NDEF——数据通路受出厂人格门控）。源码 `NFC_LOGGER=0`，双构建 md5 一致 |
+| `bin/ATC_Paper_nowa154_nfcprobe.bin` | `7aeab2d83e52767c93f1333dd84fd6a5` | 早期 NFC 探测版（已被 `_nfcwrite1` 取代） |
+| `bin/ATC_Paper_nowa154_nfcprobe6.bin` | `978ecf97b8809f06f340d39055738df9` | NFC 抓取器迭代版（已被 `_nfcexp` 取代） |
+| `bin/ATC_Paper_nowa154_nfcwrite1.bin` | `91d723b6e549bd9565482427a9fcf457` | EEPROM 写解锁验证版（裸写+10ms，已被 `_nfcexp` 取代） |
+| `bin/ATC_Paper_nowa154_nfcexp.bin` | `a33d29b0a9dcd2df23adc9f9635f689d` | ✅ **长期放置版**（NFC 实验收档）：BLE 在线 EEPROM 控制台（eeread/eewrite/eereset/nfcdiag/regwrite）+ 抓取器 v2 + T4T 应答器（待芯片人格解锁后生效）。NFC 数据通路受芯片出厂人格门控，详见 [docs/hardware_notes.md](docs/hardware_notes.md) |
+| `bin/ATC_Paper_nowa154_v40vendor.bin` | `b4a6edd839e85fa46d85dba8bf87c3e6` | 🔬 实验版（v40）：TX 禁用开关（`txdis`）+ BSM TxDone/Arbit 探针（芯片自应答检测器）+ `vendorseq` 厂商序列回放。逆向战役 v27-v39 见 [docs/nfc_reference_diff.md](docs/nfc_reference_diff.md) §8-11，操作手册见 [docs/nfc_v40_playbook.md](docs/nfc_v40_playbook.md)。禁 suspend 耗电，长期放置刷回 `_nfcexp` |
+| `bin/ATC_Paper_nowa154_v41mute.bin` | `af9e53090f79da0d6c2c552e4bf12ce9` | 🔬 实验版（v41）= v40 + `mutemode`（CSN 常低 + 零 I²C 流量静默模式，判"接触侧上电且静默时芯片是否自应答 T4T"）。用法见 playbook 阶段 0.7 |
 
-`ATC_TLSR_Paper/Firmware/ATC_Paper.bin` 是当前源码的最新构建，与 `_red` 相同。
-
-**红通道验证判读**：发测试图案后——① 红三角出现在右上且红横条全宽贴边 = 红平面映射正确；② 红色错位/镜像 = 只需改网页端 `packRedBuffer()` 映射，免重刷；③ 红色完全不显 = OTP 波形不含红驱动，需另加三色 LUT（参考 stellar-L3N-etag 的 `LUT_bwr_296` 机制）。
+`ATC_TLSR_Paper/Firmware/ATC_Paper.bin` 是当前源码的最新构建（v42daily，与 `bin/` 内同名文件一致）。
 
 ## 编译
 
@@ -81,12 +98,15 @@
 
 - [docs/hardware_notes.md](docs/hardware_notes.md) — 硬件鉴定：型号解码、TLSR8359、FM11NC08I NFC 芯片、烧录触点与引脚全表
 - [docs/screen_adaptation.md](docs/screen_adaptation.md) — 152×152 玻璃映射的逆向推导（四轮刷机实验定出栅极/源极偏移）与像素打包公式
-- [docs/ble_protocol.md](docs/ble_protocol.md) — BLE 服务/特征 UUID、命令表（含新增 `0x05`/`0x06`）、发送序列、Windows GATT 排坑
+- [docs/ble_protocol.md](docs/ble_protocol.md) — BLE 服务/特征 UUID、命令表（含新增 `0x05`/`0x06`）、发送序列、蓝牙 OTA 安全刷写序列、Windows GATT 排坑
+- [docs/nfc_reference_diff.md](docs/nfc_reference_diff.md) — NFC 芯片（FM11NC08I）接触侧逆向战报：七源参考实现逐点核对、配置空间夺权战役（v27–v41）、出厂人格终审
+- [docs/nfc_handylink_protocol.md](docs/nfc_handylink_protocol.md) — 汉朔官方 App Handy Link 逆向：NFC 层为标准 NDEF 读、无自定义协议，数据通道走店内 AP + 云
+- [docs/nfc_v40_playbook.md](docs/nfc_v40_playbook.md) — v40/v41 实验固件操作手册（原厂对照判别实验、EEPROM↔实发值 A/B、vendorseq 厂商序列回放）
 
 ## 已知限制与路线
 
-- [ ] 红通道真机验证（代码与网页工具已就绪）
-- [ ] NFC（FM11NC08I）：I2C 探测 → NDEF 写入 → RF 场唤醒翻页。I2C 地址 0xAE、IRQ_N 低有效开漏
+- [x] ~~红通道真机验证~~（2026-10-21 通过：红色显示正常，红平面映射与黑白一致）
+- [x] NFC（FM11NC08I）战役收档（2026-10-26 搁置）：接触侧逆向收官——FIFO 数据通路双向死（RX 门控在上游、TX 写入不落地，v39 自环终审），出厂人格锁定，接触侧仅剩 EEPROM 信箱 + IRQ/状态遥测；Handy Link App 侧仅标准 NDEF 读（无自定义协议可重放）；原厂价签 NDEF 可读 ⇒ 应答者=原厂 MCU（over-FIFO 嫌疑最大）。战报见上列 NFC 文档。日常版碰卡仍有"有卡"提示（防冲突 + RATS 硬件自应答）。重启此线的钥匙 = SWS 读回 tag#3 原厂固件（`tools/pico_sws_*.py` 工具链已备）
 - [ ] 屏型号被强制为 BWR154（本 fork 专机专用；多型号需求请用上游）
 - [ ] 时钟布局对 152×152 的排版优化（`tools/render.py` 可离线预览布局方案）
 

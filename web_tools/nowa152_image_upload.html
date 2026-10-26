@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nowa-154R-N 传图工具（152×152）</title>
+<title>Nowa-154R-N 传图 / OTA 工具（152×152）</title>
 <style>
   :root {
     --ink:#1c1e21; --muted:#6a6d72; --faint:#8a8d92;
@@ -66,6 +66,8 @@
   button:disabled { opacity:.45; cursor:not-allowed; }
   button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   button.primary:hover:not(:disabled) { background:var(--accent-dark); }
+  button.danger { background:#b91c1c; border-color:#b91c1c; color:#fff; }
+  button.danger:hover:not(:disabled) { background:#8f1414; }
 
   .status { display:flex; align-items:center; margin:0 0 10px; font-size:13px; }
   .status-dot { display:inline-block; width:10px; height:10px; border-radius:50%; background:#bbb;
@@ -73,7 +75,7 @@
   .status-dot.on { background:#22c55e; }
 
   .progress-wrap { background:#eceae6; border-radius:5px; height:10px; overflow:hidden; margin:4px 0 10px; }
-  #progressBar { height:100%; width:0%; background:var(--accent); transition:width .15s; }
+  #progressBar, #otaProgressBar { height:100%; width:0%; background:var(--accent); transition:width .15s; }
   #log { height:140px; overflow-y:auto; background:#111; color:#9fe29f;
          font:12px/1.55 Consolas,monospace; border-radius:8px; padding:8px 10px; white-space:pre-wrap; }
 
@@ -92,7 +94,7 @@
 <body>
 <div class="wrap">
 <header>
-  <h1>Nowa-154R-N 电子价签 · BLE 传图工具</h1>
+  <h1>Nowa-154R-N 电子价签 · BLE 传图 / OTA 工具</h1>
   <p class="sub">汉朔 152×152 墨水屏 @ ATC 固件（红通道版）。三色屏：图像中的<b>红色</b>像素走红色通道显示，其余颜色照旧黑白抖动（需配套支持 <code>0x06</code> 命令的固件）。</p>
 </header>
 
@@ -201,6 +203,24 @@
           同步后表盘通常立即重画（最迟约 1 分钟）；图片锁定中需先「恢复时钟」才会显示表盘。</p>
       </details>
     </div>
+
+    <div class="group">
+      <h3><span class="step">5</span>固件 OTA（蓝牙刷写）</h3>
+      <p class="note" style="margin:0 0 10px;"><span class="warn">仅刷本仓库 bin/ 固件。「确认刷入」后设备会擦写自身并重启（约 5~10 秒），期间切勿断开连接或取出电池——此时变砖没有 bootloader 可救，只能 UART 重刷。</span></p>
+      <div class="btn-row">
+        <button id="btnOtaFile" class="primary">选择固件 .bin…</button>
+        <button id="btnOtaSend" disabled>① 传输并校验</button>
+        <button id="btnOtaFlash" class="danger" disabled>② 确认刷入（不可逆）</button>
+        <button id="btnOtaAbort" disabled>中止</button>
+      </div>
+      <input type="file" id="otaFileInput" accept=".bin" hidden>
+      <div class="progress-wrap"><div id="otaProgressBar"></div></div>
+      <p class="note" id="otaInfo">未选择固件。</p>
+      <details class="tech">
+        <summary>OTA 流程与安全设计</summary>
+        <p class="note">「① 传输并校验」只写设备的 128KB 暂存区，不碰运行中的固件，失败可反复重试；设备端字节和校验与本地一致后才解锁第二步，任何失败 / 断连 / 中止都不会发出刷入命令。「② 确认刷入」= 擦掉运行固件、从暂存区拷贝并重启，数秒内不可断电。协议细节见 docs/ble_protocol.md。</p>
+      </details>
+    </div>
   </div>
 </div>
 </div>
@@ -216,6 +236,25 @@ const EPD_CHAR    = '4b646063-6264-f3a7-8941-e65356ea82fe';
 const RXTX_SERVICE = 0x1f10;          // RxTx 通道（固件 cmd_parser：0xDD = 设时间）
 const RXTX_CHAR    = 0x1f1f;
 const CHUNK = 240;                    // 每包图像数据字节（+1 命令字节 = 241 ≤ MTU 247）
+// OTA（上游管线：ota.c / app_att.c，fork 未改动）
+const OTA_SERVICE = 0x221f;           // OTA 服务（16 位 UUID 可直接用数字）
+const OTA_CHAR    = 0x331f;           // 同一特征：带响应写 + notify
+const OTA_BANK    = 0x20000;          // 暂存区起始地址，大小同为 0x20000（128KB）
+const OTA_BANK_MAX = 0x1FF00;         // 固件 cmd 02 地址窗口（<0x3FF00）决定的最大固件长度
+const OTA_CHUNK = 240;                // cmd 03 每包数据字节（241 ≤ MTU 247，失败自动降 19）
+const OTA_CHUNK_SMALL = 19;           // MTU 只有 23 时的兜底分块（20 字节帧）
+// 已发布固件 md5（与 README 版本表同步维护）：刷写前比对，防拿错文件
+const OTA_KNOWN_MD5 = {
+  '59c4b63c9195fa50c7014996660394c7': 'bin/ATC_Paper_nowa154_v42daily.bin（推荐日常版：时钟 + 低功耗 + NFC 碰卡提示）',
+  'ef7456e09df34ead39cc581be6cfa968': 'bin/ATC_Paper_nowa154_final.bin（旧稳定版，黑白）',
+  '12943dd8b46d049dbaa6fb8513e50ec4': 'bin/ATC_Paper_nowa154_red.bin（稳定版，真机验证；显示功能已并入 v42daily）',
+  '7aeab2d83e52767c93f1333dd84fd6a5': 'bin/ATC_Paper_nowa154_nfcprobe.bin（早期 NFC 探测版）',
+  '978ecf97b8809f06f340d39055738df9': 'bin/ATC_Paper_nowa154_nfcprobe6.bin（NFC 抓取器迭代版）',
+  '91d723b6e549bd9565482427a9fcf457': 'bin/ATC_Paper_nowa154_nfcwrite1.bin（EEPROM 写解锁验证版）',
+  'a33d29b0a9dcd2df23adc9f9635f689d': 'bin/ATC_Paper_nowa154_nfcexp.bin（NFC 实验台：控制台 + 抓取器 v2 + T4T 应答器）',
+  'b4a6edd839e85fa46d85dba8bf87c3e6': 'bin/ATC_Paper_nowa154_v40vendor.bin（实验版 v40：txdis/BSM 探针/vendorseq，禁 suspend 耗电）',
+  'af9e53090f79da0d6c2c552e4bf12ce9': 'bin/ATC_Paper_nowa154_v41mute.bin（实验版 v41：= v40 + mutemode，禁 suspend 耗电）',
+};
 
 // ---- 状态 ----
 let srcImage = null;                  // ImageBitmap（测试图案时为 null）
@@ -225,6 +264,14 @@ let device = null, charEPD = null, charRxTx = null, server = null;
 let sending = false;
 let timeSyncing = false;
 let connecting = false; // true 时 onDisconnect 不做重置（重试循环里是主动断开）
+// OTA 状态机：idle | erasing | writing | verifying | handshake | await-confirm | flashing
+let charOTA = null;
+let otaState = 'idle';
+let otaBin = null;        // Uint8Array（已通过魔数/大小检查）
+let otaSum = 0;           // 本地 16 位字节和（按 0xFF 补齐到 0x20000 后）
+let otaAbort = false;
+let otaChunkSize = OTA_CHUNK;
+let otaFlashTimer = null;
 
 // ---- 红色判定（三色屏：红像素走红平面，黑白平面该处留白）----
 const RED_SAT_MIN = 0.45;   // 饱和度下限 (max-min)/max
@@ -429,6 +476,12 @@ async function gattDiscover(maxAttempts) {
       try { // RxTx 通道（时间同步用）：同样按 UUID 单查；个别固件可能缺失，不阻断连接
         charRxTx = await (await server.getPrimaryService(RXTX_SERVICE)).getCharacteristic(RXTX_CHAR);
       } catch (_) { charRxTx = null; }
+      try { // OTA 特征（固件刷写）：cmd 06/05 的回报走 notify，必须先订阅
+        const otaSvc = await server.getPrimaryService(OTA_SERVICE);
+        charOTA = await otaSvc.getCharacteristic(OTA_CHAR);
+        await charOTA.startNotifications();
+        charOTA.oncharacteristicvaluechanged = otaOnNotify;
+      } catch (_) { charOTA = null; }
       return true;
     } catch (e) {
       lastErr = e;
@@ -441,29 +494,35 @@ async function gattDiscover(maxAttempts) {
 }
 
 async function connect() {
-  if (!bleAvailable()) return;
+  if (!bleAvailable() || otaBusy()) return;
   connecting = true;
   try {
     log('请选择设备（名称以 ESL_ 开头）…');
     device = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
-      optionalServices: [EPD_SERVICE, RXTX_SERVICE]
+      optionalServices: [EPD_SERVICE, RXTX_SERVICE, OTA_SERVICE]
     });
     device.addEventListener('gattserverdisconnected', onDisconnect);
     await gattDiscover(6);
-    log(`✓ 已连接 ${device.name || '(未命名)'}，EPD 特征就绪${charRxTx ? '，RxTx 就绪（时间同步可用）' : '；未找到 RxTx 服务，时间同步不可用'}`);
+    logBleReady();
     updateBleUI(true);
   } catch (e) { log('✗ 连接失败：' + e.message); resetBle(); }
   finally { connecting = false; }
 }
 
+function logBleReady() {
+  log(`✓ 已连接 ${device.name || '(未命名)'}，EPD 特征就绪` +
+    (charRxTx ? '，RxTx 就绪（时间同步可用）' : '；未找到 RxTx 服务，时间同步不可用') +
+    (charOTA ? '，OTA 就绪（固件刷写可用）' : '；未找到 OTA 服务，固件刷写不可用'));
+}
+
 // 复用已授权设备重连（不再弹选择器）
 async function reconnect() {
-  if (!device || connecting) return;
+  if (!device || connecting || otaBusy()) return;
   connecting = true;
   try {
     await gattDiscover(6);
-    log(`✓ 已连接 ${device.name || '(未命名)'}，EPD 特征就绪${charRxTx ? '，RxTx 就绪（时间同步可用）' : '；未找到 RxTx 服务，时间同步不可用'}`);
+    logBleReady();
     updateBleUI(true);
   } catch (e) { log('✗ 重连失败：' + e.message); }
   finally { connecting = false; }
@@ -471,6 +530,18 @@ async function reconnect() {
 
 function onDisconnect() {
   if (connecting) return; // connect() 重试循环内的主动断开
+  if (otaState === 'flashing') {
+    // 设备收到刷入命令后关中断擦写、随即重启——此刻断连即成功信号
+    clearTimeout(otaFlashTimer);
+    log('✓ 设备已断开 = 刷入完成，正在重启。稍等几秒待其重新广播，可重连并发测试图案验证。');
+    otaState = 'idle';
+    setOtaProgress(0);
+  } else if (otaBusy()) {
+    otaAbort = true; // 让还在跑的传输循环停下
+    otaState = 'idle';
+    setOtaProgress(0);
+    log('✗ 连接中断，OTA 已中止（未发出刷入命令，运行固件不受影响；重试会先整区擦除）。');
+  }
   log('设备已断开');
   resetBle();
 }
@@ -479,18 +550,23 @@ function resetBle() {
   if (device && device.gatt && device.gatt.connected) {
     try { device.gatt.disconnect(); } catch (e) { /* 已断开则忽略 */ }
   }
-  server = null; charEPD = null; charRxTx = null; sending = false; // 保留 device 供"重连"复用
+  server = null; charEPD = null; charRxTx = null; charOTA = null; sending = false; // 保留 device 供"重连"复用
   updateBleUI(false);
 }
 function updateBleUI(connected) {
+  const busy = otaBusy(); // OTA 任意进行中状态：与其余功能完全互斥
   $('dot').className = 'status-dot' + (connected ? ' on' : '');
   $('bleStatus').textContent = connected ? '已连接' : (device ? '未连接（可重连）' : '未连接');
-  $('btnSend').disabled = !connected || !bmp;
-  $('btnClock').disabled = !connected;
-  $('btnTimeSync').disabled = !connected || !charRxTx;
-  $('btnDisc').disabled = !connected;
-  $('btnConnect').disabled = connected;
-  $('btnReconn').disabled = connected || !device;
+  $('btnSend').disabled = !connected || !bmp || busy;
+  $('btnClock').disabled = !connected || busy;
+  $('btnTimeSync').disabled = !connected || !charRxTx || busy;
+  $('btnDisc').disabled = !connected; // OTA 进行中允许断开 = 中止
+  $('btnConnect').disabled = connected || busy;
+  $('btnReconn').disabled = connected || !device || busy;
+  $('btnOtaFile').disabled = busy;
+  $('btnOtaSend').disabled = !connected || !charOTA || !otaBin || busy || sending;
+  $('btnOtaFlash').disabled = otaState !== 'await-confirm';
+  $('btnOtaAbort').disabled = !busy || otaState === 'flashing';
 }
 
 async function write(bytes, note) {
@@ -499,7 +575,7 @@ async function write(bytes, note) {
 }
 
 async function sendImage() {
-  if (!charEPD || !bmp || sending) return;
+  if (!charEPD || !bmp || sending || otaBusy()) return;
   sending = true; $('btnSend').disabled = true;
   const t0 = performance.now();
   try {
@@ -544,7 +620,7 @@ async function sendImage() {
 }
 
 async function resumeClock() {
-  if (!charEPD) return;
+  if (!charEPD || otaBusy()) return;
   try {
     await write([0x05, 0x00], '解除锁定（05 00），固件将立即重画时钟表盘');
   } catch (e) { log('✗ 失败：' + e.message); }
@@ -570,7 +646,7 @@ function updateTimePanel() {
 }
 
 async function syncTime() {
-  if (!charRxTx || timeSyncing) return;
+  if (!charRxTx || timeSyncing || otaBusy()) return;
   timeSyncing = true; $('btnTimeSync').disabled = true;
   try {
     const t = Math.floor(Date.now() / 1000) + (tzMinutes() + offsetMinutes()) * 60;
@@ -580,6 +656,247 @@ async function syncTime() {
     log(`✓ 时间已同步：${frame.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ')}，表盘将显示 ${show}`);
   } catch (e) { log('✗ 时间同步失败：' + e.message); }
   finally { timeSyncing = false; $('btnTimeSync').disabled = !charRxTx; }
+}
+
+// ---- 固件 OTA（时序依据 ATC_TLSR_Paper/Firmware/src/ota.c，fork 未改动）----
+// 01+addr 擦 4KB 扇区（只认 0x20000..0x3FEFF）｜03+data 追加 256B RAM 缓冲｜
+// 02+addr 把缓冲写进暂存区｜06 让设备对整暂存区求 16 位字节和并 notify [07 hi lo]｜
+// 07+C001CEED = 擦掉运行固件→拷贝暂存区→重启（不可逆）。
+// 固件 07 的 CRC 守卫是死代码：它比较的 out_buffer[5]/[6] 永远是 0、crc_out 又被
+// 传输命令清 0，等效"只验魔数"；而发过 06 之后 crc_out=真实校验和，07 反而会被
+// 静默拒绝。所以真校验（06）通过后必须先发下面两帧"守卫复位"再发 07：
+//   03 + 20×00  → crc_out 清 0、RAM 缓冲前 20B 归零
+//   05 + addr 0 → out_buffer ← 20×0 并 notify 回读，回读全零即守卫条件恢复
+// 若未来修改固件 07 守卫，这两帧须与固件成对更新（见 docs/ble_protocol.md）。
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+class OtaError extends Error {}
+function otaBusy() { return otaState !== 'idle'; }
+function setOtaProgress(p) { $('otaProgressBar').style.width = (p * 100).toFixed(1) + '%'; }
+function otaHex(n, w) { return n.toString(16).padStart(w, '0'); }
+function otaAddrFrame(cmd, addr) {
+  return new Uint8Array([cmd, (addr >>> 24) & 255, (addr >>> 16) & 255, (addr >>> 8) & 255, addr & 255]);
+}
+async function otaWrite(frame) {
+  try { await charOTA.writeValue(frame); }
+  catch (e) { throw new OtaError(e.message || String(e)); }
+}
+// 本地校验和：bin 按 0xFF 补齐到 0x20000 后逐字节求和，与固件 cmd 06 同式
+function otaLocalSum(bin) {
+  let s = 0;
+  for (let i = 0; i < bin.length; i++) s = (s + bin[i]) & 0xFFFF;
+  return (s + (OTA_BANK - bin.length) * 0xFF) & 0xFFFF;
+}
+
+// notify 等待器：等首字节匹配的一帧（cmd 06 回报首字节 07、守卫复位回读首字节 00）
+let otaNotifyWaiter = null;
+function otaOnNotify(ev) {
+  const dv = ev.target.value;
+  const v = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+  const w = otaNotifyWaiter;
+  if (w && v[0] === w.first) {
+    clearTimeout(w.timer); otaNotifyWaiter = null; w.resolve(v);
+  } // 其余通知（cmd 01 擦除回显）忽略
+}
+function waitOtaNotify(first, timeoutMs) {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      if (otaNotifyWaiter && otaNotifyWaiter.resolve === resolve) otaNotifyWaiter = null;
+      resolve(null);
+    }, timeoutMs);
+    otaNotifyWaiter = { first, resolve, timer };
+  });
+}
+
+async function loadOtaFile(file) {
+  if (otaBusy()) return;
+  try {
+    const bin = new Uint8Array(await file.arrayBuffer());
+    if (bin.length < 12) throw new Error('文件过小，不是有效固件');
+    // Telink bin 魔数 "KNLT"（偏移 8..11，与上游 OTA 页同一检查）
+    if (String.fromCharCode(bin[8], bin[9], bin[10], bin[11]) !== 'KNLT')
+      throw new Error('缺少 Telink 固件魔数 KNLT，不是可刷写的 .bin');
+    if (bin.length > OTA_BANK_MAX)
+      throw new Error(`固件 ${bin.length} 字节超出 OTA 上限 ${OTA_BANK_MAX} 字节`);
+    otaBin = bin; otaSum = otaLocalSum(bin);
+    const md5 = md5Hex(bin);
+    const known = OTA_KNOWN_MD5[md5];
+    $('otaInfo').textContent = `${file.name} · ${bin.length} 字节 · md5 ${md5}` +
+      (known ? ` ✓ 已识别：${known}` : ' ⚠ 未匹配本仓库已发布固件（README 版本表），请确认文件来源');
+    log(`已载入固件 ${file.name}（${bin.length} 字节，校验和 0x${otaHex(otaSum, 4).toUpperCase()}）`);
+    log(known ? `✓ md5 匹配本仓库固件：${known}` : '⚠ md5 未匹配本仓库已发布固件——请确认文件来源');
+    updateBleUI(!!charEPD);
+  } catch (e) {
+    otaBin = null;
+    $('otaInfo').textContent = '未选择固件。';
+    log('✗ 固件载入失败：' + e.message);
+    updateBleUI(!!charEPD);
+  }
+}
+
+async function otaTransferOnce() {
+  const bin = otaBin;
+  // 阶段 1：整暂存区擦除（32 × 4KB，顺带清掉上一轮残留）
+  otaState = 'erasing'; updateBleUI(true);
+  log('OTA：擦除暂存区（32 × 4KB）…');
+  for (let i = 0; i < 32; i++) {
+    if (otaAbort) throw new Error('已中止');
+    await otaWrite(otaAddrFrame(0x01, OTA_BANK + i * 0x1000));
+    setOtaProgress((i + 1) / 32 * 0.05);
+  }
+  // 阶段 2：按 256B bank 传输（cmd 03 填 RAM 缓冲 → cmd 02 写暂存区，与上游页同节奏）
+  otaState = 'writing';
+  const banks = Math.ceil(bin.length / 0x100);
+  const t0 = performance.now();
+  log(`OTA：传输 ${bin.length} 字节（${banks} × 256B）…`);
+  for (let b = 0; b < banks; b++) {
+    if (otaAbort) throw new Error('已中止');
+    const off = b * 0x100, end = Math.min(off + 0x100, bin.length);
+    for (let p = off; p < end;) {
+      const take = Math.min(otaChunkSize, end - p);
+      const frame = new Uint8Array(1 + take);
+      frame[0] = 0x03;
+      frame.set(bin.subarray(p, p + take), 1);
+      await otaWrite(frame);
+      p += take;
+    }
+    await otaWrite(otaAddrFrame(0x02, OTA_BANK + off));
+    await sleep(50);
+    if (b % 24 === 0 || b === banks - 1) {
+      setOtaProgress(0.05 + end / bin.length * 0.9);
+      log(`  传输 ${end}/${bin.length} 字节 … ${((performance.now() - t0) / 1000).toFixed(0)}s`);
+    }
+  }
+  // 阶段 3：设备端字节和校验
+  otaState = 'verifying';
+  log('OTA：传输完成，请求设备端校验和（cmd 06）…');
+  await otaWrite(new Uint8Array([0x06]));
+  const nv = await waitOtaNotify(0x07, 5000);
+  if (!nv) throw new Error(otaAbort ? '已中止' : '校验应答超时（未收到 cmd 06 回报）');
+  const devSum = (nv[1] << 8) | nv[2];
+  if (devSum !== otaSum)
+    throw new Error(`校验不一致（设备 0x${otaHex(devSum, 4)} ≠ 本地 0x${otaHex(otaSum, 4)}），已拒绝刷入`);
+  log(`✓ 校验一致（0x${otaHex(otaSum, 4).toUpperCase()}），暂存区数据完整`);
+  // 阶段 4：守卫复位（见块首注释——06 之后直接发 07 会被固件静默拒绝）
+  otaState = 'handshake';
+  const zf = new Uint8Array(21); zf[0] = 0x03;
+  await otaWrite(zf);
+  await otaWrite(otaAddrFrame(0x05, 0));
+  const zv = await waitOtaNotify(0x00, 2000);
+  if (!zv) throw new Error(otaAbort ? '已中止' : '守卫复位握手失败（未收到回读）');
+  if (zv.length < 20 || zv.some(x => x)) throw new Error('守卫复位握手失败（回读非全零）');
+  // 就绪：第二步由用户确认
+  otaState = 'await-confirm';
+  setOtaProgress(1);
+  log('✓ 就绪：核对固件信息后点「② 确认刷入（不可逆）」；不刷了点「中止」放弃本次。');
+}
+
+async function otaTransfer() {
+  if (!charOTA || !otaBin || otaBusy() || sending) return;
+  otaAbort = false;
+  otaChunkSize = OTA_CHUNK;
+  let err;
+  try { await otaTransferOnce(); return; }
+  catch (e) { err = e; }
+  // 首轮大包写入失败且连接仍在：疑似 MTU 未协商到 247，整轮降级小包重试一次
+  if (err instanceof OtaError && otaChunkSize === OTA_CHUNK && !otaAbort && charOTA) {
+    log(`⚠ 大包写入失败（${err.message}），疑似 MTU 未协商到 247——降级 19 字节小包整轮重试`);
+    otaChunkSize = OTA_CHUNK_SMALL;
+    try { await otaTransferOnce(); return; }
+    catch (e2) { err = e2; }
+  }
+  if (otaState !== 'idle') { // 断连路径已由 onDisconnect 记录，这里不重复报错
+    if (err.message === '已中止') log('✓ 已中止 OTA（未发出刷入命令，运行固件不受影响）。');
+    else log(`✗ OTA 失败：${err.message}（未发出刷入命令，运行固件不受影响，可直接重试）`);
+    otaState = 'idle';
+    setOtaProgress(0);
+  }
+  updateBleUI(!!charEPD);
+}
+
+async function otaFlash() {
+  if (otaState !== 'await-confirm' || !charOTA || !otaBin) return;
+  if (!confirm(`确定把已校验固件刷入设备并重启？\n\n${otaBin.length} 字节，校验和 0x${otaHex(otaSum, 4).toUpperCase()}。\n刷入约 5~10 秒：设备会断开连接，期间切勿关闭本页 / 断开蓝牙 / 取出电池。\n\n（此步不可逆；刷入瞬间断电只能 UART 救）`)) return;
+  otaState = 'flashing';
+  updateBleUI(true);
+  try {
+    log('已发出刷入命令（07 C001CEED），设备开始擦写自身并重启…');
+    // 设备收到 07 即关中断擦写，写回执大概率收不到——成功与否以"断连"为准
+    await otaWrite(new Uint8Array([0x07, 0xC0, 0x01, 0xCE, 0xED, (otaSum >> 8) & 255, otaSum & 255]));
+    otaFlashTimer = setTimeout(() => {
+      if (otaState === 'flashing') {
+        log('⚠ 30 秒未见设备重启（固件可能未落盘）。暂存区仍有效，可直接再点「② 确认刷入」。');
+        otaState = 'await-confirm';
+        updateBleUI(true);
+      }
+    }, 30000);
+  } catch (e) {
+    await sleep(1000); // 稍等断连事件：flashing 态断连 = 成功，见 onDisconnect
+    if (otaState !== 'flashing') return;
+    clearTimeout(otaFlashTimer);
+    log(`✗ 刷入命令发送失败：${e.message}（未刷入；连接若已断开，重连后需重新传输校验）`);
+    otaState = 'idle';
+    setOtaProgress(0);
+    updateBleUI(!!charEPD);
+  }
+}
+
+function otaAbortNow() {
+  if (otaState === 'await-confirm') {
+    otaState = 'idle';
+    setOtaProgress(0);
+    log('已放弃本次刷入（暂存区数据仍在，但重新刷入前需重新执行「① 传输并校验」）。');
+    updateBleUI(!!charEPD);
+    return;
+  }
+  if (!otaBusy() || otaState === 'flashing') return;
+  otaAbort = true;
+  log('正在中止（当前步骤完成后停止，不会发出刷入命令）…');
+}
+
+// ---- MD5（标准算法，仅用于刷写前与 README 版本表比对，防拿错文件）----
+function md5Hex(bytes) {
+  const K = new Int32Array([
+    0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
+    0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
+    0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
+    0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
+    0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
+    0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
+    0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+    0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391]);
+  const S = [7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21];
+  const len = bytes.length;
+  const padded = new Uint8Array((((len + 8) >> 6) + 1) << 6);
+  padded.set(bytes);
+  padded[len] = 0x80;
+  const dv = new DataView(padded.buffer);
+  dv.setUint32(padded.length - 8, len * 8, true); // 固件 ≤128KB，长度低位足够
+  let a0 = 0x67452301 | 0, b0 = 0xefcdab89 | 0, c0 = 0x98badcfe | 0, d0 = 0x10325476 | 0;
+  const M = new Int32Array(16);
+  const rotl = (x, c) => (x << c) | (x >>> (32 - c));
+  for (let off = 0; off < padded.length; off += 64) {
+    for (let i = 0; i < 16; i++) M[i] = dv.getInt32(off + i * 4, true);
+    let A = a0, B = b0, C = c0, D = d0;
+    for (let i = 0; i < 64; i++) {
+      let F, g;
+      if (i < 16)      { F = (B & C) | (~B & D); g = i; }
+      else if (i < 32) { F = (D & B) | (~D & C); g = (5 * i + 1) % 16; }
+      else if (i < 48) { F = B ^ C ^ D;          g = (3 * i + 5) % 16; }
+      else             { F = C ^ (B | ~D);       g = (7 * i) % 16; }
+      F = (F + A + K[i] + M[g]) | 0;
+      A = D; D = C; C = B;
+      B = (B + rotl(F, S[i])) | 0;
+    }
+    a0 = (a0 + A) | 0; b0 = (b0 + B) | 0; c0 = (c0 + C) | 0; d0 = (d0 + D) | 0;
+  }
+  const out = new DataView(new ArrayBuffer(16));
+  out.setInt32(0, a0, true); out.setInt32(4, b0, true); out.setInt32(8, c0, true); out.setInt32(12, d0, true);
+  let hex = '';
+  for (let i = 0; i < 16; i++) hex += (out.getUint8(i) + 0x100).toString(16).slice(1);
+  return hex;
 }
 
 // ---- 事件绑定 ----
@@ -595,6 +912,11 @@ $('btnReconn').onclick = reconnect;
 $('btnSend').onclick = sendImage;
 $('btnClock').onclick = resumeClock;
 $('btnTimeSync').onclick = syncTime;
+$('btnOtaFile').onclick = () => $('otaFileInput').click();
+$('otaFileInput').onchange = e => { if (e.target.files[0]) loadOtaFile(e.target.files[0]); e.target.value = ''; };
+$('btnOtaSend').onclick = otaTransfer;
+$('btnOtaFlash').onclick = otaFlash;
+$('btnOtaAbort').onclick = otaAbortNow;
 $('timeOffset').oninput = () => {
   updateTimePanel();
   try { localStorage.setItem('epaper_timeOffset', $('timeOffset').value); } catch (_) {}
@@ -614,9 +936,28 @@ document.addEventListener('paste', e => {
     if (item.type.startsWith('image/')) { loadFile(item.getAsFile()); break; }
 });
 
+// createImageBitmap 不解码 SVG blob，SVG 先经 <img> 光栅化成位图
+async function svgToBitmap(blob) {
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.src = url;
+  try {
+    await img.decode();
+    if (!img.naturalWidth || !img.naturalHeight)
+      throw new Error('SVG 根元素缺少 width/height，无法确定尺寸');
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    c.getContext('2d').drawImage(img, 0, 0);
+    return await createImageBitmap(c);
+  } finally { URL.revokeObjectURL(url); }
+}
+
 async function loadFile(file) {
   try {
-    srcImage = await createImageBitmap(file);
+    if (file.type === 'image/svg+xml' || /\.svgz?$/i.test(file.name || ''))
+      srcImage = await svgToBitmap(file);
+    else
+      srcImage = await createImageBitmap(file);
     log(`已载入 ${file.name || '剪贴板图片'}（${srcImage.width}×${srcImage.height}）`);
     renderPipeline();
     if (charEPD) $('btnSend').disabled = false;
@@ -631,7 +972,7 @@ try { savedOff = parseInt(localStorage.getItem('epaper_timeOffset'), 10); } catc
 if (!Number.isNaN(savedOff)) $('timeOffset').value = Math.max(-720, Math.min(720, savedOff));
 updateTimePanel();
 setInterval(updateTimePanel, 1000);
-log('就绪。载入图片或生成测试图案 → 连接设备 → 发送。');
+log('就绪。载入图片或生成测试图案 → 连接设备 → 发送；刷固件见「固件 OTA」区（连接后选 bin → 传输校验 → 确认刷入）。');
 log('提示：若浏览器拦截 file:// 的蓝牙权限，改用  python -m http.server  后访问 localhost。');
 </script>
 </body>
