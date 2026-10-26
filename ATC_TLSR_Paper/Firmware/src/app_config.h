@@ -6,7 +6,7 @@ extern "C" {
 
 #define CLOCK_SYS_CLOCK_HZ  	24000000
 
-#define ADVERTISING_INTERVAL 1600
+#define ADVERTISING_INTERVAL 1600 // 1s 广播（v22 实验期曾临时改 240/150ms，收档还原）
 
 #define RAM _attribute_data_retention_ // short version, this is needed to keep the values in ram after sleep
 

@@ -11,6 +11,9 @@ ATC_TLSR_Paper/Firmware/out/
 ATC_TLSR_Paper/Firmware/ATC_Paper.bin
 tools/build.log
 
+# NFC 实验数据不落仓库根目录（dump 一律转存 _local/，见 AGENTS.md）
+/*.bin
+
 # 系统杂项
 Thumbs.db
 .DS_Store

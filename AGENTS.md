@@ -6,10 +6,10 @@
 
 - `ATC_TLSR_Paper/` — 固件源码 + 自带 tc32 工具链（`tc32_windows/`、`tc32_linux/`，勿动）。fork 改动集中在 `Firmware/src/`：`epd.c`、`epd_bwr_154.c/h`、`app.c/h`、`ble.c`、`epd_ble_service.c`、各 `epd_*.c/h`（read_temp 返回 int8_t）、`obd.inl`
 - `web_tools/nowa152_image_upload.html` — 单文件零依赖网页传图工具（Chrome/Edge Web BLE），须保持单文件形态
-- `bin/` — 可刷写固件发布物
-- `tools/` — `build_retry.sh`（构建重试）、`render.py`（152×152 时钟布局离线预览，需 Pillow，直接解析固件源码里的字体数据，无需编译）
-- `docs/` — `hardware_notes.md`（硬件鉴定/烧录触点）、`screen_adaptation.md`（屏映射逆向推导）、`ble_protocol.md`（BLE 协议 + Windows GATT 排坑）
-- `_local/` — **私有资料，已 gitignore，严禁提交或外传**（厂商版权 PDF、交接文档、参考仓库 stellar-L3N-etag）
+- `bin/` — 可刷写固件发布物（只在 README 版本表登记过的版本；中间实验版 v27-v39 等已归档 `_local/bin_archive/`，不入库）
+- `tools/` — `build_retry.sh`（构建重试）、`render.py`（152×152 时钟布局离线预览，需 Pillow，直接解析固件源码里的字体数据，无需编译）、`ble_ota_flash.py`（BLE OTA 刷写 + NFC EEPROM 控制台 CLI，需 bleak）、`nfc_log_parse.py`（NFC 抓取日志解析）、`pico_sws_host.py`/`pico_sws_main.py`/`sws_dump.py`（Telink SWS 读回工具链，Pico RP2040 主机方案）
+- `docs/` — `hardware_notes.md`（硬件鉴定/烧录触点/FM11NC08I 实证）、`screen_adaptation.md`（屏映射逆向推导）、`ble_protocol.md`（BLE 协议 + OTA 刷写序列 + Windows GATT 排坑）、`nfc_reference_diff.md`（NFC 接触侧逆向战报 v27-v41）、`nfc_handylink_protocol.md`（Handy Link App 逆向）、`nfc_v40_playbook.md`（实验固件操作手册）
+- `_local/` — **私有资料，已 gitignore，严禁提交或外传**（厂商版权 PDF、交接文档、参考仓库 stellar-L3N-etag、APK 逆向样本、`nfc_dumps/` 实验数据、`bin_archive/` 中间固件）
 
 ## 构建
 
@@ -27,6 +27,9 @@ Windows：`cd ATC_TLSR_Paper/Firmware && ./makeit.exe`（推荐直接跑仓库�
 - `ble.c` 的 `ble_disconnect_callback()` 里补调 `app_switch_to_indirect_adv()` 是修复上游"断连后永不恢复广播"的 bug（否则断连一次标签就从所有扫描消失），勿删。
 - 三色屏红平面链路：固件 `EPD_Display()` 的红图参数 ↔ 网页端 `packRedBuffer()`。红色错位/镜像只需改网页端映射，免重刷。
 - `Firmware/make/tl_firmware_tools.py` 的 `combine` 子命令被本 fork **有意删除**（发布安全工具拒绝其 argv 写任意路径的模式），文件内留有 NOTE；确需恢复按注释从上游取回，勿直接"还原"。
+- NFC（FM11NC08I）战役已收档（2026-10-26，战报 `docs/nfc_reference_diff.md`）：源码默认 `nfc.c` 的 `NFC_LOGGER=0`——时钟分钟刷新与 suspend 低功耗正常，碰卡检测由芯片 RF 侧硬件应答；`app.c` 实验期的强制 `epd_hold_image=1` 已撤销，勿随手加回。NFC 控制台命令（`ota.c` case 8–0x16，CLI 为 `tools/ble_ota_flash.py`）与抓取器代码保留：重开抓取器前先读 `nfc.c` 头部注释——maotek 模式布防即禁 suspend，且 EPD 分钟刷新的大电流会把芯片打到掉电楔死（v12，需配合锁屏）。中间实验固件（v27-v39）在 `_local/bin_archive/`。
+- 网页 OTA 的"守卫复位"两帧（`03`+20×00、`05`+addr0）是对 `ota.c` `0x07` 守卫死代码的确定性利用，**与固件成对**（见 `docs/ble_protocol.md`）；改 `ota.c` 的 0x07 逻辑必须同步网页工具与 `tools/ble_ota_flash.py`。
+- 发布固件前**双构建比对 md5**；`build_retry.sh` 失败重试时只删 ICE 对应的 `.o`（不清理的增量重试曾把半写坏的目标文件链接成 md5 异常的"成功"构建）。
 
 ## 约定
 

@@ -16,6 +16,7 @@
 
 #include "OneBitDisplay.h"
 #include "TIFF_G4.h"
+#include "nfc.h"
 extern const uint8_t ucMirror[];
 #include "Roboto_Black_80.h"
 #include "font_60.h"
@@ -368,9 +369,16 @@ _attribute_ram_code_ void epd_display(uint32_t time_is, uint16_t battery_mv, int
         sprintf(buff, "%d.%02dV", battery_mv / 1000, (battery_mv % 1000) / 10);
         epd_ink_extent(&Dialog_plain_16, buff, &l, &r);
         obdWriteStringCustom(&obd, (GFXfont *)&Dialog_plain_16, 143 - r, yoff + 124, buff, 1);
-        epd_ink_extent(&Dialog_plain_16, epd_model_string[epd_model], &l, &r);
-        obdWriteStringCustom(&obd, (GFXfont *)&Dialog_plain_16, 76 - (l + r) / 2, yoff + 144,
-                            (char *)epd_model_string[epd_model], 1);
+        // 机型标注行附带 NFC 探测结果（仅冷启动探测，见 nfc.c；57 = 0x57 ACK）
+        char nfc_tag[20];
+        if (nfc_probe_done && nfc_probe_ack)
+            sprintf(nfc_tag, "%s NFC57", epd_model_string[epd_model]);
+        else if (nfc_probe_done)
+            sprintf(nfc_tag, "%s NFC--", epd_model_string[epd_model]);
+        else
+            sprintf(nfc_tag, "%s", epd_model_string[epd_model]);
+        epd_ink_extent(&Dialog_plain_16, nfc_tag, &l, &r);
+        obdWriteStringCustom(&obd, (GFXfont *)&Dialog_plain_16, 76 - (l + r) / 2, yoff + 144, nfc_tag, 1);
     }
     else
     {
